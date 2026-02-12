@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dailycinema-config
+  namespace: dailycinema
+data:
+  LOG_LEVEL: "INFO"
+  ENVIRONMENT: "production"
+  ML_SERVICE_URL: "http://ml-service:8001"
+  UNITY_SERVICE_URL: "http://unity-service:8002"
+  RATE_LIMIT: "60/minute"

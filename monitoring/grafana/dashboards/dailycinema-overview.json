@@ -1,0 +1,109 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 80 }] } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "legend": { "displayMode": "list" }, "tooltip": { "mode": "single" } },
+      "title": "ML Job Duration",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "rate(dailycinema_ml_job_duration_seconds_sum[5m]) / rate(dailycinema_ml_job_duration_seconds_count[5m])", "legendFormat": "{{status}}", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 80 }] } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "options": { "legend": { "displayMode": "list" }, "tooltip": { "mode": "single" } },
+      "title": "Render Duration",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "rate(dailycinema_render_duration_seconds_sum[5m]) / rate(dailycinema_render_duration_seconds_count[5m])", "legendFormat": "{{status}}", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 10 }] } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 3,
+      "options": { "legend": { "displayMode": "list" }, "tooltip": { "mode": "single" } },
+      "title": "Error Rate",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "rate(dailycinema_errors_total[5m])", "legendFormat": "{{component}} - {{error_type}}", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "thresholds": { "steps": [{ "color": "green", "value": null }] } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 4,
+      "options": { "legend": { "displayMode": "list" }, "tooltip": { "mode": "single" } },
+      "title": "Jobs In Progress",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "dailycinema_jobs_in_progress", "legendFormat": "{{job_type}}", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "thresholds": { "steps": [{ "color": "green", "value": null }] } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "id": 5,
+      "options": { "legend": { "displayMode": "list" }, "tooltip": { "mode": "single" } },
+      "title": "Queue Size",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "dailycinema_queue_size", "legendFormat": "{{queue_name}}", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "thresholds": { "steps": [{ "color": "green", "value": null }] } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "id": 6,
+      "options": { "legend": { "displayMode": "list" }, "tooltip": { "mode": "single" } },
+      "title": "Retry Count",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "rate(dailycinema_retries_total[5m])", "legendFormat": "{{job_type}}", "refId": "A" }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["dailycinema"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Daily Cinema Overview",
+  "uid": "dailycinema-overview",
+  "version": 1
+}

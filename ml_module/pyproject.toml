@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "dailycinema-ml"
-version = "0.1.0"
-description = "Daily Cinema ML Module"
+version = "1.0.0"
+description = "Daily Cinema ML Module - Production"
 authors = ["Daily Cinema"]
 
 [tool.poetry.dependencies]
@@ -10,6 +10,10 @@ fastapi = {extras = ["standard"], version = "^0.115.0"}
 google-cloud-storage = "^2.14.0"
 Pillow = "^10.2.0"
 pydantic-settings = "^2.1.0"
+redis = {extras = ["hiredis"], version = "^5.0.0"}
+prometheus-client = "^0.21.0"
+prometheus-fastapi-instrumentator = "^7.0.0"
+python-json-logger = "^2.0.0"
 
 [build-system]
 requires = ["poetry-core"]
