@@ -1,0 +1,74 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: dailycinema
+      POSTGRES_PASSWORD: dailycinema
+      POSTGRES_DB: dailycinema
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dailycinema"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  gcs:
+    image: fsouza/fake-gcs-server
+    command: ["-scheme", "http", "-port", "4443", "-external-url", "http://gcs:4443"]
+    ports:
+      - "4443:4443"
+    volumes:
+      - gcsdata:/data
+
+  ml:
+    build:
+      context: ./ml_module
+    ports:
+      - "8001:8001"
+    environment:
+      GCS_ENDPOINT: "http://gcs:4443"
+      GCS_BUCKET: "dailycinema"
+    depends_on:
+      - gcs
+
+  unity:
+    build:
+      context: ./unity_worker
+    ports:
+      - "8002:8002"
+    environment:
+      GCS_ENDPOINT: "http://gcs:4443"
+      GCS_BUCKET: "dailycinema"
+    depends_on:
+      - gcs
+
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://dailycinema:dailycinema@db:5432/dailycinema"
+      DATABASE_URL_SYNC: "postgresql+psycopg2://dailycinema:dailycinema@db:5432/dailycinema"
+      GCS_ENDPOINT: "http://gcs:4443"
+      GCS_BUCKET: "dailycinema"
+      ML_SERVICE_URL: "http://ml:8001"
+      UNITY_SERVICE_URL: "http://unity:8002"
+    depends_on:
+      db:
+        condition: service_healthy
+      gcs:
+        condition: service_started
+      ml:
+        condition: service_started
+      unity:
+        condition: service_started
+
+volumes:
+  pgdata:
+  gcsdata:

@@ -1,0 +1,16 @@
+[tool.poetry]
+name = "dailycinema-unity"
+version = "0.1.0"
+description = "Daily Cinema Unity HDRP Worker (Placeholder)"
+authors = ["Daily Cinema"]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = {extras = ["standard"], version = "^0.115.0"}
+google-cloud-storage = "^2.14.0"
+httpx = "^0.27.0"
+pydantic-settings = "^2.1.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
