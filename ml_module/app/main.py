@@ -102,6 +102,7 @@ class Settings(BaseSettings):
     max_workers: int = 4
     batch_size: int = 8
     default_model: str = "placeholder_v1"
+    acu_mode: str = "full"
 
     class Config:
         env_file = ".env"
@@ -133,6 +134,7 @@ class JobStatus(BaseModel):
     frame_urls: list[str] = []
     model: str = ""
     duration_ms: float = 0
+    mock: bool = False
 
 
 def get_gcs_client() -> gcs.Client:
@@ -287,7 +289,27 @@ def generate_interpolated_frames(prompt: str, shot_id: str, num_frames: int, mod
     return frames
 
 
+def run_generation_mock(job_id: str, shot_id: str, project_id: str, prompt: str, model: str, num_frames: int, visual_style: str = DEFAULT_VISUAL_STYLE):
+    logger.info("[ACU_MODE=light] Mock generation for job %s (model=%s, style=%s, frames=%d) — skipping real inference", job_id, model, visual_style, num_frames)
+    mock_urls = [
+        f"mock://dailycinema/projects/{project_id}/ml/shot_{shot_id}/frame_{i + 1:03d}.png"
+        for i in range(num_frames)
+    ]
+    jobs[job_id] = {
+        "job_id": job_id,
+        "status": "completed",
+        "frame_urls": mock_urls,
+        "model": model,
+        "duration_ms": 0.1,
+        "mock": True,
+    }
+    GENERATION_TOTAL.labels(model=model, status="completed").inc()
+
+
 def run_generation(job_id: str, shot_id: str, project_id: str, prompt: str, model: str, num_frames: int, visual_style: str = DEFAULT_VISUAL_STYLE):
+    if settings.acu_mode == "light":
+        run_generation_mock(job_id, shot_id, project_id, prompt, model, num_frames, visual_style)
+        return
     start = time.monotonic()
     JOBS_IN_PROGRESS.inc()
     try:
@@ -314,6 +336,7 @@ def run_generation(job_id: str, shot_id: str, project_id: str, prompt: str, mode
             "frame_urls": frame_urls,
             "model": model,
             "duration_ms": duration,
+            "mock": False,
         }
         GENERATION_DURATION.labels(model=model, status="completed").observe(time.monotonic() - start)
         GENERATION_TOTAL.labels(model=model, status="completed").inc()
@@ -328,6 +351,7 @@ def run_generation(job_id: str, shot_id: str, project_id: str, prompt: str, mode
             "frame_urls": [],
             "model": model,
             "duration_ms": 0,
+            "mock": False,
         }
     finally:
         JOBS_IN_PROGRESS.dec()
@@ -387,3 +411,8 @@ async def readiness():
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/acu_mode")
+async def acu_mode():
+    return {"acu_mode": settings.acu_mode}

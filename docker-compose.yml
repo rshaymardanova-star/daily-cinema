@@ -44,6 +44,7 @@ services:
       GCS_ENDPOINT: "http://gcs:4443"
       GCS_BUCKET: "dailycinema"
       REDIS_URL: "redis://redis:6379/0"
+      ACU_MODE: "${ACU_MODE:-full}"
     depends_on:
       - gcs
       - redis
@@ -57,6 +58,7 @@ services:
       GCS_ENDPOINT: "http://gcs:4443"
       GCS_BUCKET: "dailycinema"
       REDIS_URL: "redis://redis:6379/0"
+      ACU_MODE: "${ACU_MODE:-full}"
     depends_on:
       - gcs
       - redis
@@ -76,6 +78,7 @@ services:
       REDIS_URL: "redis://redis:6379/0"
       API_KEY: "dc-prod-api-key-change-me"
       LOG_LEVEL: "INFO"
+      ACU_MODE: "${ACU_MODE:-full}"
     depends_on:
       db:
         condition: service_healthy

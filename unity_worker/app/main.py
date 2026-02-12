@@ -129,6 +129,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
     max_workers: int = 2
     ffmpeg_threads: int = 4
+    acu_mode: str = "full"
 
     class Config:
         env_file = ".env"
@@ -157,6 +158,7 @@ class RenderStatus(BaseModel):
     video_url: str = ""
     template: str = ""
     duration_ms: float = 0
+    mock: bool = False
 
 
 def get_gcs_client() -> gcs.Client:
@@ -274,7 +276,23 @@ def render_video(frames: list[str], work_dir: str, template_name: str = DEFAULT_
     return output_path
 
 
+def run_render_mock(job_id: str, project_id: str, scene: dict, template_name: str, visual_style: str = "ethereal_default"):
+    logger.info("[ACU_MODE=light] Mock render for job %s (template=%s, style=%s) — skipping FFmpeg/HDRP", job_id, template_name, visual_style)
+    jobs[job_id] = {
+        "job_id": job_id,
+        "status": "completed",
+        "video_url": f"mock://dailycinema/projects/{project_id}/render/final.mp4",
+        "template": template_name,
+        "duration_ms": 0.1,
+        "mock": True,
+    }
+    RENDER_TOTAL.labels(template=template_name, status="completed").inc()
+
+
 def run_render(job_id: str, project_id: str, scene: dict, template_name: str, visual_style: str = "ethereal_default"):
+    if settings.acu_mode == "light":
+        run_render_mock(job_id, project_id, scene, template_name, visual_style)
+        return
     start = time.monotonic()
     JOBS_IN_PROGRESS.inc()
     try:
@@ -302,6 +320,7 @@ def run_render(job_id: str, project_id: str, scene: dict, template_name: str, vi
                 "video_url": video_url,
                 "template": template_name,
                 "duration_ms": duration,
+                "mock": False,
             }
             RENDER_DURATION.labels(template=template_name, status="completed").observe(time.monotonic() - start)
             RENDER_TOTAL.labels(template=template_name, status="completed").inc()
@@ -317,6 +336,7 @@ def run_render(job_id: str, project_id: str, scene: dict, template_name: str, vi
             "video_url": "",
             "template": template_name,
             "duration_ms": 0,
+            "mock": False,
         }
     finally:
         JOBS_IN_PROGRESS.dec()
@@ -383,3 +403,8 @@ async def readiness():
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/acu_mode")
+async def acu_mode():
+    return {"acu_mode": settings.acu_mode}

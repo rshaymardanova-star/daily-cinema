@@ -52,6 +52,9 @@ async def run_pipeline(project_id: uuid.UUID) -> None:
             else:
                 visual_style = raw_style
 
+            if settings.acu_mode == "light":
+                logger.info("[ACU_MODE=light] Pipeline for project %s — ML and Unity will use mock mode", project_id)
+
             ml_tasks = []
             for shot in project.shots:
                 ml_job = MLJob(shot_id=shot.id, status="pending")

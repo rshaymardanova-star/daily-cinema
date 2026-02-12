@@ -24,6 +24,7 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
     environment: str = "production"
+    acu_mode: str = "full"
 
     class Config:
         env_file = ".env"
