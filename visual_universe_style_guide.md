@@ -289,7 +289,270 @@ curl -X POST http://localhost:8000/projects/{id}/render \
 
 ---
 
-## 11. ACU Optimization
+## 11. Style Endpoints Reference
+
+### Purpose
+
+Every service in the Daily Cinema pipeline exposes a `/styles` endpoint so that clients and operators can discover which visual styles are available, inspect their configuration, and validate a style before submitting a render. The endpoints are read-only (except the backend validation POST) and never trigger ML inference or Unity rendering.
+
+| Service | Endpoint | Method | Description |
+|---|---|---|---|
+| Backend (`:8000`) | `GET /styles` | GET | List available styles with default and current ACU mode |
+| Backend (`:8000`) | `POST /styles/validate` | POST | Validate a style name and return its full ML + HDRP + FFmpeg configuration |
+| ML Module (`:8001`) | `GET /styles` | GET | List styles with descriptions and ML prompt keywords |
+| Unity Worker (`:8002`) | `GET /styles` | GET | List styles with HDRP profile summaries (bloom, fog) |
+
+### Retrieving Available Styles
+
+#### Backend — `GET /styles`
+
+```bash
+curl http://localhost:8000/styles \
+  -H "X-API-Key: dc-prod-api-key-change-me"
+```
+
+Response:
+
+```json
+{
+  "styles": [
+    "ethereal_default",
+    "cosmic_cinematic",
+    "luminous_dreamscape",
+    "spectral_mythology",
+    "neon_ritual"
+  ],
+  "default": "ethereal_default",
+  "acu_mode": "full"
+}
+```
+
+#### ML Module — `GET /styles`
+
+```bash
+curl http://localhost:8001/styles
+```
+
+Response:
+
+```json
+{
+  "styles": {
+    "ethereal_default": {
+      "description": "Standard ethereal cosmic style - meditative calm",
+      "keywords": ["ethereal light", "spectral glow", "volumetric fog", "dreamlike atmosphere"]
+    },
+    "cosmic_cinematic": {
+      "description": "High-contrast cinematic cosmic - epic transcendence",
+      "keywords": ["cosmic aura", "transcendent energy", "neon mist", "spectral glow"]
+    },
+    "luminous_dreamscape": {
+      "description": "Soft dreamy pastels - dreamlike serenity",
+      "keywords": ["dreamlike atmosphere", "iridescent fabric", "ethereal light", "mythical harmony"]
+    },
+    "spectral_mythology": {
+      "description": "Mythical creature-focused - ancient wisdom",
+      "keywords": ["mythical harmony", "spectral glow", "cosmic aura", "volumetric fog"]
+    },
+    "neon_ritual": {
+      "description": "Ritualistic energy ceremony - spiritual ritual",
+      "keywords": ["transcendent energy", "neon mist", "cosmic aura", "spectral glow"]
+    }
+  },
+  "default": "ethereal_default"
+}
+```
+
+#### Unity Worker — `GET /styles`
+
+```bash
+curl http://localhost:8002/styles
+```
+
+Response:
+
+```json
+{
+  "styles": {
+    "ethereal_default": {
+      "description": "Ethereal cosmic - soft bloom, volumetric fog, spectral grading",
+      "bloom": 0.8,
+      "fog": 0.15
+    },
+    "cosmic_cinematic": {
+      "description": "Cosmic cinematic - anamorphic bloom, deep fog, neon grading",
+      "bloom": 1.0,
+      "fog": 0.25
+    },
+    "luminous_dreamscape": {
+      "description": "Luminous dreamscape - gaussian bloom, heavy fog, pastel grading",
+      "bloom": 1.2,
+      "fog": 0.30
+    },
+    "spectral_mythology": {
+      "description": "Spectral mythology - warm/cool split, medium fog, gold-blue grading",
+      "bloom": 0.9,
+      "fog": 0.20
+    },
+    "neon_ritual": {
+      "description": "Neon ritual - anamorphic bloom, neon-saturated grading",
+      "bloom": 1.1,
+      "fog": 0.18
+    }
+  },
+  "default": "ethereal_default"
+}
+```
+
+### Validating a Style — `POST /styles/validate`
+
+This backend endpoint resolves a style name and returns the full pipeline configuration without running any ML inference or Unity rendering. Invalid or unknown styles are resolved to `ethereal_default`.
+
+```bash
+curl -X POST http://localhost:8000/styles/validate \
+  -H "X-API-Key: dc-prod-api-key-change-me" \
+  -H "Content-Type: application/json" \
+  -d '{"visual_style": "cosmic_cinematic"}'
+```
+
+Response (valid style):
+
+```json
+{
+  "valid": true,
+  "visual_style": "cosmic_cinematic",
+  "resolved_style": "cosmic_cinematic",
+  "ml_keywords": ["cosmic aura", "transcendent energy", "neon mist", "spectral glow"],
+  "hdrp_preset": {
+    "bloom_intensity": 1.0,
+    "fog_density": 0.25,
+    "vignette_intensity": 0.35,
+    "chromatic_aberration": 0.12
+  },
+  "ffmpeg_preset": {
+    "fps": 30,
+    "preset": "slow",
+    "crf": 18
+  },
+  "acu_mode": "full"
+}
+```
+
+Response (invalid style — fallback):
+
+```bash
+curl -X POST http://localhost:8000/styles/validate \
+  -H "X-API-Key: dc-prod-api-key-change-me" \
+  -H "Content-Type: application/json" \
+  -d '{"visual_style": "nonexistent_style"}'
+```
+
+```json
+{
+  "valid": false,
+  "visual_style": "nonexistent_style",
+  "resolved_style": "ethereal_default",
+  "ml_keywords": ["ethereal light", "spectral glow", "neon mist", "volumetric fog", "dreamlike atmosphere"],
+  "hdrp_preset": {
+    "bloom_intensity": 0.8,
+    "fog_density": 0.15,
+    "vignette_intensity": 0.25,
+    "chromatic_aberration": 0.08
+  },
+  "ffmpeg_preset": {
+    "fps": 24,
+    "preset": "medium",
+    "crf": 20
+  },
+  "acu_mode": "full"
+}
+```
+
+### Overriding `visual_style` Per Project
+
+The `visual_style` is set at project creation time and applies to every shot in that project. If omitted or invalid, it defaults to `ethereal_default`.
+
+```bash
+curl -X POST http://localhost:8000/projects \
+  -H "X-API-Key: dc-prod-api-key-change-me" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Neon Ceremony",
+    "visual_style": "neon_ritual",
+    "shots": [
+      {"prompt": "glowing figures in ritualistic circle", "order": 1}
+    ]
+  }'
+```
+
+The style is stored on the `Project` record and cannot be changed after creation. To use a different style, create a new project.
+
+| `visual_style` value | Behavior |
+|---|---|
+| Valid name (e.g. `"cosmic_cinematic"`) | Used as-is for all pipeline stages |
+| Empty string `""` | Coerced to `ethereal_default` at API boundary |
+| Omitted from request body | Defaults to `ethereal_default` |
+| Unknown name (e.g. `"foo"`) | Coerced to `ethereal_default` with a warning log |
+
+### Style Propagation Through the Pipeline
+
+The `visual_style` value flows through every stage of the pipeline automatically once a render is started:
+
+```
+POST /projects  (visual_style: "cosmic_cinematic")
+    |
+    v
+[Project record created]  visual_style stored in DB
+    |
+    v
+POST /projects/{id}/render
+    |
+    v
+[Orchestrator.run_pipeline]
+    |-- reads project.visual_style from DB
+    |-- validates against VALID_VISUAL_STYLES (fallback if invalid)
+    |
+    |-- for each shot:
+    |       |
+    |       v
+    |   POST ml:8001/generate
+    |       body: { ..., "visual_style": "cosmic_cinematic", "model": "cosmic_cinematic" }
+    |       |
+    |       ML module:
+    |         1. Selects VISUAL_STYLES["cosmic_cinematic"] config
+    |         2. Enriches prompt with style keywords
+    |         3. Generates frames with style palette, gradients, particles
+    |         4. Uploads to GCS: projects/{id}/ml/shot_{n}/frame_001.png
+    |
+    |-- builds scene_json with visual_style field
+    |       |
+    |       v
+    |   POST unity:8002/render
+    |       body: { ..., "visual_style": "cosmic_cinematic", "template": "cosmic_cinematic" }
+    |       |
+    |       Unity worker:
+    |         1. Selects VISUAL_HDRP_PROFILES["cosmic_cinematic"] config
+    |         2. Downloads ML frames from GCS
+    |         3. Builds FFmpeg vf_chain with style color grading, bloom, vignette
+    |         4. Renders video with style-specific CRF, FPS, preset
+    |         5. Uploads to GCS: projects/{id}/render/final.mp4
+    |
+    v
+[Pipeline complete]  project.status = "completed"
+```
+
+**Validation layers (defense-in-depth):**
+
+| Layer | Location | Action on invalid style |
+|---|---|---|
+| 1. API boundary | `ProjectCreate.validate_visual_style` | Coerces to `ethereal_default`, logs warning |
+| 2. Orchestrator | `run_pipeline()` checks `VALID_VISUAL_STYLES` | Falls back to `ethereal_default`, logs warning |
+| 3. ML Module | `run_generation()` checks `VISUAL_STYLES` dict | Falls back to `ethereal_default`, logs warning |
+| 4. Unity Worker | `run_render()` checks `VISUAL_HDRP_PROFILES` dict | Falls back to `ethereal_default`, logs warning |
+
+---
+
+## 12. ACU Optimization
 
 ### ACU_MODE
 
