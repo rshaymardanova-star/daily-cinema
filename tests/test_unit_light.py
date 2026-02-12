@@ -498,6 +498,205 @@ class TestFallbackPipelinePropagation:
         pytest.fail("Pipeline with empty style timed out")
 
 
+class TestFFmpegFilterDeduplication:
+    """Tests for FFmpeg filter deduplication in the Unity render pipeline."""
+
+    def test_no_duplicate_filters_in_default_style(self, client):
+        job_id = f"dedup-default-{int(time.time())}"
+        r = client.post(
+            f"{UNITY_URL}/render",
+            json={
+                "job_id": job_id,
+                "project_id": "00000000-0000-0000-0000-000000000010",
+                "scene": {"project_id": "test", "shots": []},
+                "visual_style": "ethereal_default",
+                "template": "ethereal_default",
+            },
+        )
+        assert r.status_code == 200
+
+    @pytest.mark.parametrize("style", ALL_STYLES)
+    def test_no_duplicate_filters_per_style(self, client, style):
+        job_id = f"dedup-{style}-{int(time.time())}"
+        r = client.post(
+            f"{UNITY_URL}/render",
+            json={
+                "job_id": job_id,
+                "project_id": "00000000-0000-0000-0000-000000000010",
+                "scene": {"project_id": "test", "shots": []},
+                "visual_style": style,
+                "template": style,
+            },
+        )
+        assert r.status_code == 200
+        for _ in range(15):
+            sr = client.get(f"{UNITY_URL}/status/{job_id}")
+            if sr.json()["status"] == "completed":
+                return
+            time.sleep(0.5)
+        pytest.fail(f"Render for {style} did not complete")
+
+    def test_dedup_endpoint_returns_200_with_invalid_style(self, client):
+        job_id = f"dedup-invalid-{int(time.time())}"
+        r = client.post(
+            f"{UNITY_URL}/render",
+            json={
+                "job_id": job_id,
+                "project_id": "00000000-0000-0000-0000-000000000010",
+                "scene": {"project_id": "test", "shots": []},
+                "visual_style": "bogus",
+                "template": "bogus",
+            },
+        )
+        assert r.status_code == 200
+        assert r.json()["template"] == "ethereal_default"
+
+    def test_dedup_endpoint_returns_200_with_empty_style(self, client):
+        job_id = f"dedup-empty-{int(time.time())}"
+        r = client.post(
+            f"{UNITY_URL}/render",
+            json={
+                "job_id": job_id,
+                "project_id": "00000000-0000-0000-0000-000000000010",
+                "scene": {"project_id": "test", "shots": []},
+                "visual_style": "",
+                "template": "",
+            },
+        )
+        assert r.status_code == 200
+        assert r.json()["template"] == "ethereal_default"
+
+    def test_pipeline_with_dedup_completes(self, client):
+        r = client.post(
+            f"{BASE_URL}/projects",
+            json={
+                "name": "Dedup Pipeline Test",
+                "visual_style": "cosmic_cinematic",
+                "shots": [{"prompt": "dedup test", "order": 1}],
+            },
+            headers=HEADERS,
+        )
+        assert r.status_code == 200
+        project_id = r.json()["id"]
+
+        r = client.post(f"{BASE_URL}/projects/{project_id}/render", headers=HEADERS)
+        assert r.status_code == 200
+
+        for _ in range(60):
+            r = client.get(f"{BASE_URL}/projects/{project_id}/status", headers=HEADERS)
+            data = r.json()
+            if data["project_status"] in ("completed", "failed"):
+                assert data["project_status"] == "completed"
+                return
+            time.sleep(1)
+        pytest.fail("Dedup pipeline timed out")
+
+
+class TestFFmpegDeduplicateFilterUnit:
+    """Direct unit tests for _deduplicate_filters logic via the /dedup-check endpoint."""
+
+    def test_duplicate_eq_filters(self, client):
+        r = client.post(
+            f"{UNITY_URL}/filters/check",
+            json={"filters": [
+                "eq=saturation=1.2:contrast=1.1",
+                "vignette=angle=0.40",
+                "eq=saturation=1.0:contrast=1.0",
+            ]},
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["duplicates_found"] is True
+        assert len(data["deduplicated"]) == 2
+        assert data["deduplicated"][-1] == "eq=saturation=1.0:contrast=1.0"
+
+    def test_duplicate_noise_filters(self, client):
+        r = client.post(
+            f"{UNITY_URL}/filters/check",
+            json={"filters": [
+                "noise=alls=3:allf=t",
+                "gblur=sigma=0.5",
+                "noise=alls=5:allf=t",
+            ]},
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["duplicates_found"] is True
+        assert len(data["deduplicated"]) == 2
+        eq_keys = [f.split("=", 1)[0] for f in data["deduplicated"]]
+        assert eq_keys.count("noise") == 1
+
+    def test_no_duplicates(self, client):
+        r = client.post(
+            f"{UNITY_URL}/filters/check",
+            json={"filters": [
+                "scale=1920:1080",
+                "eq=saturation=1.1:contrast=0.9",
+                "vignette=angle=0.43",
+            ]},
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["duplicates_found"] is False
+        assert len(data["deduplicated"]) == 3
+
+    def test_empty_filter_list(self, client):
+        r = client.post(
+            f"{UNITY_URL}/filters/check",
+            json={"filters": []},
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["duplicates_found"] is False
+        assert data["deduplicated"] == []
+
+    def test_mixed_valid_and_duplicate_filters(self, client):
+        r = client.post(
+            f"{UNITY_URL}/filters/check",
+            json={"filters": [
+                "scale=1920:1080",
+                "eq=saturation=1.2:contrast=1.1",
+                "vignette=angle=0.40",
+                "gblur=sigma=0.5",
+                "eq=saturation=0.95:contrast=0.85",
+                "noise=alls=3:allf=t",
+                "vignette=angle=0.44",
+            ]},
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["duplicates_found"] is True
+        assert len(data["deduplicated"]) == 5
+        eq_keys = [f.split("=", 1)[0] for f in data["deduplicated"]]
+        assert eq_keys.count("eq") == 1
+        assert eq_keys.count("vignette") == 1
+
+    def test_single_filter(self, client):
+        r = client.post(
+            f"{UNITY_URL}/filters/check",
+            json={"filters": ["eq=saturation=1.0:contrast=1.0"]},
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["duplicates_found"] is False
+        assert len(data["deduplicated"]) == 1
+
+    def test_all_duplicates(self, client):
+        r = client.post(
+            f"{UNITY_URL}/filters/check",
+            json={"filters": [
+                "eq=saturation=1.0",
+                "eq=saturation=1.1",
+                "eq=saturation=1.2",
+            ]},
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["duplicates_found"] is True
+        assert len(data["deduplicated"]) == 1
+        assert data["deduplicated"][0] == "eq=saturation=1.2"
+
+
 class TestLightModePipeline:
     def test_full_pipeline_in_light_mode(self, client):
         r = client.post(

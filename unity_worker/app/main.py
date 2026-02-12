@@ -229,6 +229,23 @@ def download_frames(scene: dict, work_dir: str) -> list[str]:
     return frames
 
 
+def _deduplicate_filters(filters: list[str]) -> list[str]:
+    seen: dict[str, int] = {}
+    deduped: list[str] = []
+    for f in filters:
+        key = f.split("=", 1)[0]
+        if key in seen:
+            logger.warning(
+                "Duplicate FFmpeg filter detected: '%s' (keeping last, dropping earlier '%s')",
+                f, deduped[seen[key]],
+            )
+            deduped[seen[key]] = None
+        seen[key] = len(deduped)
+        deduped.append(f)
+    result = [f for f in deduped if f is not None]
+    return result
+
+
 def _build_vf_chain(visual_style: str) -> str:
     profile = VISUAL_HDRP_PROFILES.get(visual_style)
     filters = ["scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2"]
@@ -252,6 +269,7 @@ def _build_vf_chain(visual_style: str) -> str:
     else:
         filters.append("eq=saturation=1.0:contrast=1.0")
 
+    filters = _deduplicate_filters(filters)
     return ",".join(filters)
 
 
@@ -541,6 +559,18 @@ def run_render_preview(job_id: str, project_id: str, scene: dict, visual_style: 
         }
     finally:
         JOBS_IN_PROGRESS.dec()
+
+
+@app.post("/filters/check")
+async def check_filters(payload: dict):
+    filters = payload.get("filters", [])
+    deduped = _deduplicate_filters(filters)
+    return {
+        "original": filters,
+        "deduplicated": deduped,
+        "duplicates_found": len(deduped) != len(filters),
+        "removed_count": len(filters) - len(deduped),
+    }
 
 
 @app.get("/health")
