@@ -122,6 +122,21 @@ for vname, vprofile in VISUAL_HDRP_PROFILES.items():
 
 DEFAULT_TEMPLATE = "ethereal_default"
 
+MICRO_PIPELINE_PROFILE = {
+    "description": "Headless micro-pipeline — no post-processing, minimal HDRP",
+    "fps": 15,
+    "preset": "ultrafast",
+    "crf": 30,
+    "bloom_intensity": 0,
+    "fog_density": 0,
+    "vignette_intensity": 0,
+    "chromatic_aberration": 0,
+    "saturation": 1.0,
+    "contrast": 1.0,
+    "film_grain": 0,
+    "resolution": "640x360",
+}
+
 material_cache: dict[str, bool] = {}
 
 
@@ -238,6 +253,49 @@ def _build_vf_chain(visual_style: str) -> str:
         filters.append("eq=saturation=1.0:contrast=1.0")
 
     return ",".join(filters)
+
+
+def render_video_micro(frames: list[str], work_dir: str) -> str:
+    output_path = os.path.join(work_dir, "preview.mp4")
+    if not frames:
+        subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-f", "lavfi", "-i",
+                "color=c=black:s=640x360:d=2",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                "-preset", "ultrafast", "-crf", "30",
+                output_path,
+            ],
+            check=True, capture_output=True,
+        )
+        return output_path
+
+    concat_file = os.path.join(work_dir, "concat.txt")
+    with open(concat_file, "w") as f:
+        for frame in frames:
+            f.write(f"file '{frame}'\n")
+            f.write("duration 1\n")
+        f.write(f"file '{frames[-1]}'\n")
+
+    subprocess.run(
+        [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", concat_file,
+            "-vf", "scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2",
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "30",
+            "-pix_fmt", "yuv420p",
+            "-r", "15",
+            "-threads", "1",
+            output_path,
+        ],
+        check=True, capture_output=True,
+    )
+    logger.info("Micro-pipeline render complete (no post-processing)")
+    return output_path
 
 
 def render_video(frames: list[str], work_dir: str, template_name: str = DEFAULT_TEMPLATE, visual_style: str = "ethereal_default") -> str:
@@ -430,6 +488,59 @@ async def readiness():
     except Exception:
         ffmpeg_ok = False
     return {"status": "ready" if ffmpeg_ok else "degraded", "ffmpeg": "ok" if ffmpeg_ok else "missing", "workers": settings.max_workers}
+
+
+@app.post("/render/preview", response_model=RenderStatus)
+async def render_preview(req: RenderRequest):
+    visual_style = req.visual_style or "ethereal_default"
+    jobs[req.job_id] = {
+        "job_id": req.job_id,
+        "status": "processing",
+        "video_url": "",
+        "template": "micro_preview",
+        "duration_ms": 0,
+    }
+    executor.submit(run_render_preview, req.job_id, req.project_id, req.scene, visual_style)
+    return RenderStatus(**jobs[req.job_id])
+
+
+def run_render_preview(job_id: str, project_id: str, scene: dict, visual_style: str):
+    start = time.monotonic()
+    JOBS_IN_PROGRESS.inc()
+    try:
+        with tempfile.TemporaryDirectory() as work_dir:
+            frames = download_frames(scene, work_dir)
+            video_path = render_video_micro(frames, work_dir)
+
+            client = get_gcs_client()
+            bucket = ensure_bucket(client, settings.gcs_bucket)
+            blob_path = f"projects/{project_id}/render/preview.mp4"
+            blob = bucket.blob(blob_path)
+            blob.upload_from_filename(video_path, content_type="video/mp4")
+
+            video_url = f"{settings.gcs_endpoint}/storage/v1/b/{settings.gcs_bucket}/o/{blob_path}?alt=media"
+            duration = (time.monotonic() - start) * 1000
+            jobs[job_id] = {
+                "job_id": job_id,
+                "status": "completed",
+                "video_url": video_url,
+                "template": "micro_preview",
+                "duration_ms": duration,
+                "mock": False,
+            }
+            logger.info("Preview render %s completed in %.0fms", job_id, duration)
+    except Exception as e:
+        logger.exception("Preview render %s failed: %s", job_id, e)
+        jobs[job_id] = {
+            "job_id": job_id,
+            "status": "failed",
+            "video_url": "",
+            "template": "micro_preview",
+            "duration_ms": 0,
+            "mock": False,
+        }
+    finally:
+        JOBS_IN_PROGRESS.dec()
 
 
 @app.get("/health")

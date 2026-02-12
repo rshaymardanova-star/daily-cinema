@@ -3,8 +3,10 @@ import io
 import json
 import logging
 import sys
+import threading
 import time
 import random
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import FastAPI
@@ -121,6 +123,35 @@ model_cache: dict[str, bool] = {}
 generation_cache: dict[str, dict] = {}
 CACHE_HITS = Counter("ml_cache_hits_total", "ML generation cache hits")
 CACHE_MISSES = Counter("ml_cache_misses_total", "ML generation cache misses")
+BATCH_TOTAL = Counter("ml_batch_total", "ML batch processing events")
+BATCH_SIZE_HIST = Histogram("ml_batch_size", "Number of jobs per batch", buckets=[1, 2, 4, 8, 16])
+
+batch_queue: deque = deque()
+batch_lock = threading.Lock()
+BATCH_WINDOW_SEC = 0.5
+
+
+def _batch_worker():
+    while True:
+        time.sleep(BATCH_WINDOW_SEC)
+        batch = []
+        with batch_lock:
+            while batch_queue and len(batch) < settings.batch_size:
+                batch.append(batch_queue.popleft())
+        if not batch:
+            continue
+        BATCH_TOTAL.inc()
+        BATCH_SIZE_HIST.observe(len(batch))
+        logger.info("Processing ML batch of %d jobs", len(batch))
+        for item in batch:
+            try:
+                run_generation(**item)
+            except Exception as e:
+                logger.exception("Batch item %s failed: %s", item.get("job_id"), e)
+
+
+batch_thread = threading.Thread(target=_batch_worker, daemon=True)
+batch_thread.start()
 
 
 def _cache_key(prompt: str, visual_style: str, model: str, num_frames: int) -> str:
@@ -405,6 +436,38 @@ async def generate(req: GenerateRequest):
         visual_style = DEFAULT_VISUAL_STYLE
     executor.submit(run_generation, req.job_id, req.shot_id, req.project_id, req.prompt, model, req.num_frames, visual_style)
     return JobStatus(**jobs[req.job_id])
+
+
+@app.post("/generate/batch")
+async def generate_batch(requests: list[GenerateRequest]):
+    results = []
+    for req in requests:
+        model = req.model
+        if not model or model not in MODELS:
+            model = DEFAULT_MODEL
+        visual_style = req.visual_style
+        if not visual_style or visual_style not in VISUAL_STYLES:
+            visual_style = DEFAULT_VISUAL_STYLE
+        jobs[req.job_id] = {
+            "job_id": req.job_id,
+            "status": "processing",
+            "frame_urls": [],
+            "model": model,
+            "duration_ms": 0,
+        }
+        with batch_lock:
+            batch_queue.append({
+                "job_id": req.job_id,
+                "shot_id": req.shot_id,
+                "project_id": req.project_id,
+                "prompt": req.prompt,
+                "model": model,
+                "num_frames": req.num_frames,
+                "visual_style": visual_style,
+            })
+        results.append({"job_id": req.job_id, "status": "queued"})
+    logger.info("Enqueued batch of %d ML jobs", len(requests))
+    return {"batch_size": len(requests), "jobs": results}
 
 
 @app.get("/status/{job_id}", response_model=JobStatus)

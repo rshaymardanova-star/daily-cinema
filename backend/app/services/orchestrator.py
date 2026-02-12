@@ -21,9 +21,54 @@ from app.metrics import (
     JOBS_IN_PROGRESS,
     JOBS_TOTAL,
     RETRY_COUNTER,
+    ACU_BUDGET_USED,
+    ACU_BUDGET_WARNINGS,
+    ACU_FALLBACK_EVENTS,
 )
 
 logger = logging.getLogger(__name__)
+
+ACU_COSTS = {
+    "ml_job": 10.0,
+    "render_job": 25.0,
+    "render_preview": 5.0,
+    "mock_job": 0.1,
+}
+
+
+class ACUBudgetTracker:
+    def __init__(self, project_id: str, budget: float, warning_threshold: float):
+        self.project_id = project_id
+        self.budget = budget
+        self.warning_threshold = warning_threshold
+        self.used = 0.0
+        self.fallback_triggered = False
+
+    def consume(self, cost_type: str) -> bool:
+        cost = ACU_COSTS.get(cost_type, 1.0)
+        self.used += cost
+        ACU_BUDGET_USED.labels(project_id=self.project_id).set(self.used)
+
+        ratio = self.used / self.budget if self.budget > 0 else 1.0
+        if ratio >= 1.0 and not self.fallback_triggered:
+            self.fallback_triggered = True
+            ACU_FALLBACK_EVENTS.inc()
+            logger.warning(
+                "[ACU Budget] Project %s exceeded budget (%.1f/%.1f). Falling back to light mode.",
+                self.project_id, self.used, self.budget,
+            )
+            return True
+        if ratio >= self.warning_threshold:
+            ACU_BUDGET_WARNINGS.inc()
+            logger.warning(
+                "[ACU Budget] Project %s approaching limit (%.1f/%.1f = %.0f%%)",
+                self.project_id, self.used, self.budget, ratio * 100,
+            )
+        return False
+
+    @property
+    def remaining(self) -> float:
+        return max(0.0, self.budget - self.used)
 
 
 async def run_pipeline(project_id: uuid.UUID) -> None:
@@ -52,7 +97,11 @@ async def run_pipeline(project_id: uuid.UUID) -> None:
             else:
                 visual_style = raw_style
 
-            if settings.acu_mode == "light":
+            budget = ACUBudgetTracker(
+                str(project_id), settings.acu_budget_per_task, settings.acu_warning_threshold
+            )
+            use_light = settings.acu_mode == "light"
+            if use_light:
                 logger.info("[ACU_MODE=light] Pipeline for project %s — ML and Unity will use mock mode", project_id)
 
             ml_tasks = []
@@ -73,6 +122,12 @@ async def run_pipeline(project_id: uuid.UUID) -> None:
             frame_map = {}
             all_success = True
             for (shot, ml_job), ml_result in zip(ml_tasks, ml_results):
+                cost_type = "mock_job" if use_light else "ml_job"
+                exceeded = budget.consume(cost_type)
+                if exceeded and not use_light:
+                    use_light = True
+                    logger.warning("[ACU Budget] Switching remaining jobs to light mode for project %s", project_id)
+
                 ml_job_db = await db2.get(MLJob, ml_job.id)
                 if isinstance(ml_result, Exception):
                     logger.error("ML job %s failed: %s", ml_job.id, ml_result)
@@ -112,6 +167,9 @@ async def run_pipeline(project_id: uuid.UUID) -> None:
             await db2.commit()
             await db2.refresh(render_job)
 
+            render_cost = "mock_job" if use_light else "render_job"
+            budget.consume(render_cost)
+
             render_result = await dispatch_unity_render_with_retry(render_job, scene_json, visual_style)
 
             render_job_db = await db2.get(RenderJob, render_job.id)
@@ -133,7 +191,10 @@ async def run_pipeline(project_id: uuid.UUID) -> None:
                 JOBS_TOTAL.labels(job_type="render", status="completed").inc()
 
             await db2.commit()
-            logger.info("Pipeline completed for project %s", project_id)
+            logger.info(
+                "Pipeline completed for project %s (ACU budget: %.1f/%.1f used)",
+                project_id, budget.used, budget.budget,
+            )
 
     except Exception as e:
         logger.exception("Pipeline failed for project %s: %s", project_id, e)

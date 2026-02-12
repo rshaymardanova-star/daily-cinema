@@ -49,3 +49,19 @@ RETRY_COUNTER = Counter(
     "Total retry attempts",
     ["job_type"],
 )
+
+ACU_BUDGET_USED = Gauge(
+    "dailycinema_acu_budget_used",
+    "ACU budget consumed by current task",
+    ["project_id"],
+)
+
+ACU_BUDGET_WARNINGS = Counter(
+    "dailycinema_acu_budget_warnings_total",
+    "ACU budget warning events",
+)
+
+ACU_FALLBACK_EVENTS = Counter(
+    "dailycinema_acu_fallback_total",
+    "ACU automatic fallback to light mode events",
+)
