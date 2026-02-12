@@ -1,0 +1,27 @@
+repos:
+  - repo: https://github.com/psf/black
+    rev: 24.4.2
+    hooks:
+      - id: black
+        args: [--line-length=150]
+
+  - repo: https://github.com/pycqa/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        args: [--profile=black, --line-length=150]
+
+  - repo: https://github.com/pycqa/flake8
+    rev: 7.0.0
+    hooks:
+      - id: flake8
+        args: [--max-line-length=150, --ignore=E501,W503]
+
+  - repo: local
+    hooks:
+      - id: unit-tests-light
+        name: unit tests (ACU_MODE=light)
+        entry: bash -c 'ACU_MODE=light python3 -m pytest tests/test_unit_light.py -x -q'
+        language: system
+        pass_filenames: false
+        always_run: true

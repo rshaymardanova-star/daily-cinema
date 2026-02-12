@@ -6,6 +6,8 @@ import time
 import httpx
 import pytest
 
+pytestmark = [pytest.mark.fast, pytest.mark.unit]
+
 ML_URL = "http://localhost:8001"
 UNITY_URL = "http://localhost:8002"
 BASE_URL = "http://localhost:8000"
