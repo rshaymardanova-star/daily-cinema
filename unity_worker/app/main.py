@@ -1,3 +1,5 @@
+import hashlib
+import json
 import logging
 import os
 import subprocess
@@ -32,12 +34,108 @@ RENDER_TOTAL = Counter("unity_render_total", "Total renders", ["template", "stat
 JOBS_IN_PROGRESS = Gauge("unity_jobs_in_progress", "Render jobs in progress")
 FRAMES_DOWNLOADED = Counter("unity_frames_downloaded_total", "Total frames downloaded")
 
+VISUAL_HDRP_PROFILES = {
+    "ethereal_default": {
+        "description": "Ethereal cosmic - soft bloom, volumetric fog, spectral grading",
+        "fps": 24,
+        "preset": "medium",
+        "crf": 20,
+        "bloom_intensity": 0.8,
+        "fog_density": 0.15,
+        "vignette_intensity": 0.25,
+        "chromatic_aberration": 0.08,
+        "color_grading": {"shadows": (20, 15, 50), "midtones": (40, 35, 80), "highlights": (200, 180, 255)},
+        "saturation": 1.1,
+        "contrast": 0.9,
+        "film_grain": 0.02,
+    },
+    "cosmic_cinematic": {
+        "description": "Cinematic cosmic - anamorphic bloom, deep fog, neon highlights",
+        "fps": 30,
+        "preset": "slow",
+        "crf": 18,
+        "bloom_intensity": 1.0,
+        "fog_density": 0.25,
+        "vignette_intensity": 0.35,
+        "chromatic_aberration": 0.12,
+        "color_grading": {"shadows": (5, 5, 40), "midtones": (30, 20, 70), "highlights": (150, 200, 255)},
+        "saturation": 1.2,
+        "contrast": 1.1,
+        "film_grain": 0.03,
+    },
+    "luminous_dreamscape": {
+        "description": "Dreamy pastels - gaussian bloom, heavy fog, pastel shift",
+        "fps": 24,
+        "preset": "medium",
+        "crf": 19,
+        "bloom_intensity": 1.2,
+        "fog_density": 0.30,
+        "vignette_intensity": 0.20,
+        "chromatic_aberration": 0.05,
+        "color_grading": {"shadows": (30, 20, 45), "midtones": (80, 60, 100), "highlights": (255, 220, 240)},
+        "saturation": 0.95,
+        "contrast": 0.85,
+        "film_grain": 0.01,
+    },
+    "spectral_mythology": {
+        "description": "Mythical - warm gold + cool blue split toning, soft fog",
+        "fps": 24,
+        "preset": "medium",
+        "crf": 20,
+        "bloom_intensity": 0.9,
+        "fog_density": 0.20,
+        "vignette_intensity": 0.30,
+        "chromatic_aberration": 0.10,
+        "color_grading": {"shadows": (10, 20, 45), "midtones": (40, 60, 60), "highlights": (255, 215, 180)},
+        "saturation": 1.15,
+        "contrast": 0.95,
+        "film_grain": 0.02,
+    },
+    "neon_ritual": {
+        "description": "Neon ritual - anamorphic bloom, neon-saturated highlights",
+        "fps": 30,
+        "preset": "slow",
+        "crf": 18,
+        "bloom_intensity": 1.1,
+        "fog_density": 0.18,
+        "vignette_intensity": 0.40,
+        "chromatic_aberration": 0.15,
+        "color_grading": {"shadows": (20, 5, 40), "midtones": (60, 20, 80), "highlights": (255, 100, 255)},
+        "saturation": 1.3,
+        "contrast": 1.05,
+        "film_grain": 0.04,
+    },
+}
+
 TEMPLATES = {
     "default": {"description": "Standard 24fps H.264", "fps": 24, "preset": "medium", "crf": 23},
     "cinematic": {"description": "Cinematic 30fps high quality", "fps": 30, "preset": "slow", "crf": 18},
     "fast_preview": {"description": "Fast preview 15fps", "fps": 15, "preset": "ultrafast", "crf": 28},
 }
-DEFAULT_TEMPLATE = "default"
+for vname, vprofile in VISUAL_HDRP_PROFILES.items():
+    TEMPLATES[vname] = {
+        "description": vprofile["description"],
+        "fps": vprofile["fps"],
+        "preset": vprofile["preset"],
+        "crf": vprofile["crf"],
+    }
+
+DEFAULT_TEMPLATE = "ethereal_default"
+
+MICRO_PIPELINE_PROFILE = {
+    "description": "Headless micro-pipeline — no post-processing, minimal HDRP",
+    "fps": 15,
+    "preset": "ultrafast",
+    "crf": 30,
+    "bloom_intensity": 0,
+    "fog_density": 0,
+    "vignette_intensity": 0,
+    "chromatic_aberration": 0,
+    "saturation": 1.0,
+    "contrast": 1.0,
+    "film_grain": 0,
+    "resolution": "640x360",
+}
 
 material_cache: dict[str, bool] = {}
 
@@ -48,6 +146,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
     max_workers: int = 2
     ffmpeg_threads: int = 4
+    acu_mode: str = "full"
 
     class Config:
         env_file = ".env"
@@ -60,13 +159,25 @@ Instrumentator(excluded_handlers=["/health/live", "/health/ready", "/metrics"]).
 
 jobs: dict[str, dict] = {}
 executor = ThreadPoolExecutor(max_workers=settings.max_workers)
+render_cache: dict[str, dict] = {}
+CACHE_HITS = Counter("unity_cache_hits_total", "Unity render cache hits")
+CACHE_MISSES = Counter("unity_cache_misses_total", "Unity render cache misses")
+
+
+def _render_cache_key(scene: dict, template_name: str, visual_style: str) -> str:
+    frame_urls = []
+    for shot in scene.get("shots", []):
+        frame_urls.extend(shot.get("frame_urls", []))
+    payload = json.dumps({"frame_urls": sorted(frame_urls), "template": template_name, "visual_style": visual_style}, sort_keys=True)
+    return hashlib.sha256(payload.encode()).hexdigest()
 
 
 class RenderRequest(BaseModel):
     job_id: str
     project_id: str
     scene: dict
-    template: str = "default"
+    template: str = "ethereal_default"
+    visual_style: str = "ethereal_default"
 
 
 class RenderStatus(BaseModel):
@@ -74,7 +185,10 @@ class RenderStatus(BaseModel):
     status: str
     video_url: str = ""
     template: str = ""
+    visual_style: str = ""
+    resolved_style: str = ""
     duration_ms: float = 0
+    mock: bool = False
 
 
 def get_gcs_client() -> gcs.Client:
@@ -117,9 +231,98 @@ def download_frames(scene: dict, work_dir: str) -> list[str]:
     return frames
 
 
-def render_video(frames: list[str], work_dir: str, template_name: str = DEFAULT_TEMPLATE) -> str:
+def _deduplicate_filters(filters: list[str]) -> list[str]:
+    seen: dict[str, int] = {}
+    deduped: list[str] = []
+    for f in filters:
+        key = f.split("=", 1)[0]
+        if key in seen:
+            logger.warning(
+                "Duplicate FFmpeg filter detected: '%s' (keeping last, dropping earlier '%s')",
+                f, deduped[seen[key]],
+            )
+            deduped[seen[key]] = None
+        seen[key] = len(deduped)
+        deduped.append(f)
+    result = [f for f in deduped if f is not None]
+    return result
+
+
+def _build_vf_chain(visual_style: str) -> str:
+    profile = VISUAL_HDRP_PROFILES.get(visual_style)
+    filters = ["scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2"]
+
+    if profile:
+        cg = profile["color_grading"]
+        sat = profile["saturation"]
+        cont = profile["contrast"]
+        filters.append(f"eq=saturation={sat}:contrast={cont}")
+
+        vig = profile["vignette_intensity"]
+        if vig > 0:
+            angle = 0.5 - (vig * 0.3)
+            filters.append(f"vignette=angle={angle:.2f}")
+
+        if profile["fog_density"] > 0.2:
+            filters.append("gblur=sigma=0.5")
+
+        if profile.get("film_grain", 0) > 0.02:
+            filters.append("noise=alls=3:allf=t")
+    else:
+        filters.append("eq=saturation=1.0:contrast=1.0")
+
+    filters = _deduplicate_filters(filters)
+    return ",".join(filters)
+
+
+def render_video_micro(frames: list[str], work_dir: str) -> str:
+    output_path = os.path.join(work_dir, "preview.mp4")
+    if not frames:
+        subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-f", "lavfi", "-i",
+                "color=c=black:s=640x360:d=2",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                "-preset", "ultrafast", "-crf", "30",
+                output_path,
+            ],
+            check=True, capture_output=True,
+        )
+        return output_path
+
+    concat_file = os.path.join(work_dir, "concat.txt")
+    with open(concat_file, "w") as f:
+        for frame in frames:
+            f.write(f"file '{frame}'\n")
+            f.write("duration 1\n")
+        f.write(f"file '{frames[-1]}'\n")
+
+    subprocess.run(
+        [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", concat_file,
+            "-vf", "scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2",
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "30",
+            "-pix_fmt", "yuv420p",
+            "-r", "15",
+            "-threads", "1",
+            output_path,
+        ],
+        check=True, capture_output=True,
+    )
+    logger.info("Micro-pipeline render complete (no post-processing)")
+    return output_path
+
+
+def render_video(frames: list[str], work_dir: str, template_name: str = DEFAULT_TEMPLATE, visual_style: str = "ethereal_default") -> str:
     template = TEMPLATES.get(template_name, TEMPLATES[DEFAULT_TEMPLATE])
     output_path = os.path.join(work_dir, "final.mp4")
+
+    vf_chain = _build_vf_chain(visual_style)
 
     if not frames:
         subprocess.run(
@@ -148,7 +351,7 @@ def render_video(frames: list[str], work_dir: str, template_name: str = DEFAULT_
             "ffmpeg", "-y",
             "-f", "concat", "-safe", "0",
             "-i", concat_file,
-            "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
+            "-vf", vf_chain,
             "-c:v", "libx264",
             "-preset", template["preset"],
             "-crf", str(template["crf"]),
@@ -160,19 +363,58 @@ def render_video(frames: list[str], work_dir: str, template_name: str = DEFAULT_
         ],
         check=True, capture_output=True,
     )
+    logger.info("Rendered with visual style %s, vf_chain: %s", visual_style, vf_chain)
     return output_path
 
 
-def run_render(job_id: str, project_id: str, scene: dict, template_name: str):
+def run_render_mock(job_id: str, project_id: str, scene: dict, template_name: str, visual_style: str = "ethereal_default", original_style: str = ""):
+    logger.info("[ACU_MODE=light] Mock render for job %s (template=%s, style=%s) — skipping FFmpeg/HDRP", job_id, template_name, visual_style)
+    jobs[job_id] = {
+        "job_id": job_id,
+        "status": "completed",
+        "video_url": f"mock://dailycinema/projects/{project_id}/render/final.mp4",
+        "template": template_name,
+        "visual_style": original_style or visual_style,
+        "resolved_style": visual_style,
+        "duration_ms": 0.1,
+        "mock": True,
+    }
+    RENDER_TOTAL.labels(template=template_name, status="completed").inc()
+
+
+def run_render(job_id: str, project_id: str, scene: dict, template_name: str, visual_style: str = "ethereal_default", original_style: str = ""):
+    if settings.acu_mode == "light":
+        run_render_mock(job_id, project_id, scene, template_name, visual_style, original_style)
+        return
+
+    ck = _render_cache_key(scene, template_name, visual_style)
+    cached = render_cache.get(ck)
+    if cached:
+        CACHE_HITS.inc()
+        logger.info("Render cache hit for job %s (key=%s)", job_id, ck[:12])
+        jobs[job_id] = {
+            "job_id": job_id,
+            "status": "completed",
+            "video_url": cached["video_url"],
+            "template": template_name,
+            "visual_style": original_style or visual_style,
+            "resolved_style": visual_style,
+            "duration_ms": 0.1,
+            "mock": False,
+        }
+        RENDER_TOTAL.labels(template=template_name, status="completed").inc()
+        return
+    CACHE_MISSES.inc()
+
     start = time.monotonic()
     JOBS_IN_PROGRESS.inc()
     try:
-        logger.info("Starting render for job %s with template %s", job_id, template_name)
+        logger.info("Starting render for job %s with template %s style %s", job_id, template_name, visual_style)
         with tempfile.TemporaryDirectory() as work_dir:
             frames = download_frames(scene, work_dir)
             logger.info("Downloaded %d frames", len(frames))
 
-            video_path = render_video(frames, work_dir, template_name)
+            video_path = render_video(frames, work_dir, template_name, visual_style)
             logger.info("Rendered video: %s", video_path)
 
             client = get_gcs_client()
@@ -190,11 +432,15 @@ def run_render(job_id: str, project_id: str, scene: dict, template_name: str):
                 "status": "completed",
                 "video_url": video_url,
                 "template": template_name,
+                "visual_style": original_style or visual_style,
+                "resolved_style": visual_style,
                 "duration_ms": duration,
+                "mock": False,
             }
+            render_cache[ck] = {"video_url": video_url}
             RENDER_DURATION.labels(template=template_name, status="completed").observe(time.monotonic() - start)
             RENDER_TOTAL.labels(template=template_name, status="completed").inc()
-            logger.info("Render job %s completed in %.0fms", job_id, duration)
+            logger.info("Render job %s completed in %.0fms (cached key=%s)", job_id, duration, ck[:12])
 
     except Exception as e:
         logger.exception("Render job %s failed: %s", job_id, e)
@@ -205,7 +451,10 @@ def run_render(job_id: str, project_id: str, scene: dict, template_name: str):
             "status": "failed",
             "video_url": "",
             "template": template_name,
+            "visual_style": original_style or visual_style,
+            "resolved_style": visual_style,
             "duration_ms": 0,
+            "mock": False,
         }
     finally:
         JOBS_IN_PROGRESS.dec()
@@ -213,15 +462,27 @@ def run_render(job_id: str, project_id: str, scene: dict, template_name: str):
 
 @app.post("/render", response_model=RenderStatus)
 async def render(req: RenderRequest):
-    template = req.template if req.template in TEMPLATES else DEFAULT_TEMPLATE
+    template = req.template
+    if not template or template not in TEMPLATES:
+        logger.warning("Invalid template '%s' in render request, falling back to '%s'", req.template, DEFAULT_TEMPLATE)
+        template = DEFAULT_TEMPLATE
+    original_style = req.visual_style
+    visual_style = req.visual_style
+    if not visual_style or visual_style not in VISUAL_HDRP_PROFILES:
+        logger.warning("Invalid visual_style '%s' in render request, falling back to 'ethereal_default'", req.visual_style)
+        visual_style = "ethereal_default"
+    if visual_style in TEMPLATES and template == "ethereal_default":
+        template = visual_style
     jobs[req.job_id] = {
         "job_id": req.job_id,
         "status": "processing",
         "video_url": "",
         "template": template,
+        "visual_style": original_style,
+        "resolved_style": visual_style,
         "duration_ms": 0,
     }
-    executor.submit(run_render, req.job_id, req.project_id, req.scene, template)
+    executor.submit(run_render, req.job_id, req.project_id, req.scene, template, visual_style, original_style)
     return RenderStatus(**jobs[req.job_id])
 
 
@@ -235,6 +496,14 @@ async def get_status(job_id: str):
 @app.get("/templates")
 async def list_templates():
     return {"templates": {k: v["description"] for k, v in TEMPLATES.items()}, "default": DEFAULT_TEMPLATE}
+
+
+@app.get("/styles")
+async def list_styles():
+    return {
+        "styles": {k: {"description": v["description"], "bloom": v["bloom_intensity"], "fog": v["fog_density"]} for k, v in VISUAL_HDRP_PROFILES.items()},
+        "default": "ethereal_default",
+    }
 
 
 @app.get("/health/live")
@@ -252,6 +521,86 @@ async def readiness():
     return {"status": "ready" if ffmpeg_ok else "degraded", "ffmpeg": "ok" if ffmpeg_ok else "missing", "workers": settings.max_workers}
 
 
+@app.post("/render/preview", response_model=RenderStatus)
+async def render_preview(req: RenderRequest):
+    original_style = req.visual_style
+    visual_style = req.visual_style
+    if not visual_style or visual_style not in VISUAL_HDRP_PROFILES:
+        logger.warning("Invalid visual_style '%s' in preview request, falling back to 'ethereal_default'", req.visual_style)
+        visual_style = "ethereal_default"
+    jobs[req.job_id] = {
+        "job_id": req.job_id,
+        "status": "processing",
+        "video_url": "",
+        "template": "micro_preview",
+        "visual_style": original_style,
+        "resolved_style": visual_style,
+        "duration_ms": 0,
+    }
+    executor.submit(run_render_preview, req.job_id, req.project_id, req.scene, visual_style, original_style)
+    return RenderStatus(**jobs[req.job_id])
+
+
+def run_render_preview(job_id: str, project_id: str, scene: dict, visual_style: str, original_style: str = ""):
+    start = time.monotonic()
+    JOBS_IN_PROGRESS.inc()
+    try:
+        with tempfile.TemporaryDirectory() as work_dir:
+            frames = download_frames(scene, work_dir)
+            video_path = render_video_micro(frames, work_dir)
+
+            client = get_gcs_client()
+            bucket = ensure_bucket(client, settings.gcs_bucket)
+            blob_path = f"projects/{project_id}/render/preview.mp4"
+            blob = bucket.blob(blob_path)
+            blob.upload_from_filename(video_path, content_type="video/mp4")
+
+            video_url = f"{settings.gcs_endpoint}/storage/v1/b/{settings.gcs_bucket}/o/{blob_path}?alt=media"
+            duration = (time.monotonic() - start) * 1000
+            jobs[job_id] = {
+                "job_id": job_id,
+                "status": "completed",
+                "video_url": video_url,
+                "template": "micro_preview",
+                "visual_style": original_style or visual_style,
+                "resolved_style": visual_style,
+                "duration_ms": duration,
+                "mock": False,
+            }
+            logger.info("Preview render %s completed in %.0fms", job_id, duration)
+    except Exception as e:
+        logger.exception("Preview render %s failed: %s", job_id, e)
+        jobs[job_id] = {
+            "job_id": job_id,
+            "status": "failed",
+            "video_url": "",
+            "template": "micro_preview",
+            "visual_style": original_style or visual_style,
+            "resolved_style": visual_style,
+            "duration_ms": 0,
+            "mock": False,
+        }
+    finally:
+        JOBS_IN_PROGRESS.dec()
+
+
+@app.post("/filters/check")
+async def check_filters(payload: dict):
+    filters = payload.get("filters", [])
+    deduped = _deduplicate_filters(filters)
+    return {
+        "original": filters,
+        "deduplicated": deduped,
+        "duplicates_found": len(deduped) != len(filters),
+        "removed_count": len(filters) - len(deduped),
+    }
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/acu_mode")
+async def acu_mode():
+    return {"acu_mode": settings.acu_mode}

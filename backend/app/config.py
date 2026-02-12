@@ -24,6 +24,10 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
     environment: str = "production"
+    acu_mode: str = "full"
+
+    acu_budget_per_task: float = 100.0
+    acu_warning_threshold: float = 0.8
 
     class Config:
         env_file = ".env"
