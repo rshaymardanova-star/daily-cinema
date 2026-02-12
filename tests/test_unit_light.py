@@ -697,6 +697,285 @@ class TestFFmpegDeduplicateFilterUnit:
         assert data["deduplicated"][0] == "eq=saturation=1.2"
 
 
+class TestStyleMetadataInResponses:
+    """Tests for visual_style + resolved_style metadata in all API responses."""
+
+    def test_project_creation_explicit_style(self, client):
+        r = client.post(
+            f"{BASE_URL}/projects",
+            json={
+                "name": "Metadata Explicit Style",
+                "visual_style": "cosmic_cinematic",
+                "shots": [{"prompt": "test", "order": 1}],
+            },
+            headers=HEADERS,
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["visual_style"] == "cosmic_cinematic"
+        assert data["resolved_style"] == "cosmic_cinematic"
+
+    def test_project_creation_missing_style_fallback(self, client):
+        r = client.post(
+            f"{BASE_URL}/projects",
+            json={
+                "name": "Metadata Missing Style",
+                "shots": [{"prompt": "test", "order": 1}],
+            },
+            headers=HEADERS,
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["visual_style"] == "ethereal_default"
+        assert data["resolved_style"] == "ethereal_default"
+
+    def test_project_creation_invalid_style_fallback(self, client):
+        r = client.post(
+            f"{BASE_URL}/projects",
+            json={
+                "name": "Metadata Invalid Style",
+                "visual_style": "nonexistent_style",
+                "shots": [{"prompt": "test", "order": 1}],
+            },
+            headers=HEADERS,
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["visual_style"] == "ethereal_default"
+        assert data["resolved_style"] == "ethereal_default"
+
+    def test_get_project_includes_style_metadata(self, client):
+        r = client.post(
+            f"{BASE_URL}/projects",
+            json={
+                "name": "Metadata Get Project",
+                "visual_style": "neon_ritual",
+                "shots": [{"prompt": "test", "order": 1}],
+            },
+            headers=HEADERS,
+        )
+        assert r.status_code == 200
+        project_id = r.json()["id"]
+
+        r = client.get(f"{BASE_URL}/projects/{project_id}", headers=HEADERS)
+        assert r.status_code == 200
+        data = r.json()
+        assert data["visual_style"] == "neon_ritual"
+        assert data["resolved_style"] == "neon_ritual"
+
+    def test_project_status_includes_style_metadata(self, client):
+        r = client.post(
+            f"{BASE_URL}/projects",
+            json={
+                "name": "Metadata Status",
+                "visual_style": "luminous_dreamscape",
+                "shots": [{"prompt": "test", "order": 1}],
+            },
+            headers=HEADERS,
+        )
+        assert r.status_code == 200
+        project_id = r.json()["id"]
+
+        r = client.get(f"{BASE_URL}/projects/{project_id}/status", headers=HEADERS)
+        assert r.status_code == 200
+        data = r.json()
+        assert data["visual_style"] == "luminous_dreamscape"
+        assert data["resolved_style"] == "luminous_dreamscape"
+
+    def test_generate_explicit_style_metadata(self, client):
+        job_id = f"meta-gen-explicit-{int(time.time())}"
+        r = client.post(
+            f"{ML_URL}/generate",
+            json={
+                "job_id": job_id,
+                "shot_id": "00000000-0000-0000-0000-000000000001",
+                "project_id": "00000000-0000-0000-0000-000000000001",
+                "prompt": "test",
+                "visual_style": "spectral_mythology",
+                "model": "spectral_mythology",
+            },
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["visual_style"] == "spectral_mythology"
+        assert data["resolved_style"] == "spectral_mythology"
+
+    def test_generate_invalid_style_shows_fallback(self, client):
+        job_id = f"meta-gen-invalid-{int(time.time())}"
+        r = client.post(
+            f"{ML_URL}/generate",
+            json={
+                "job_id": job_id,
+                "shot_id": "00000000-0000-0000-0000-000000000001",
+                "project_id": "00000000-0000-0000-0000-000000000001",
+                "prompt": "test",
+                "visual_style": "bogus_style",
+                "model": "ethereal_default",
+            },
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["visual_style"] == "bogus_style"
+        assert data["resolved_style"] == "ethereal_default"
+
+    def test_generate_completed_has_both_styles(self, client):
+        job_id = f"meta-gen-complete-{int(time.time())}"
+        r = client.post(
+            f"{ML_URL}/generate",
+            json={
+                "job_id": job_id,
+                "shot_id": "00000000-0000-0000-0000-000000000001",
+                "project_id": "00000000-0000-0000-0000-000000000001",
+                "prompt": "test",
+                "visual_style": "invalid_xyz",
+                "model": "ethereal_default",
+            },
+        )
+        assert r.status_code == 200
+        for _ in range(15):
+            sr = client.get(f"{ML_URL}/status/{job_id}")
+            if sr.json()["status"] == "completed":
+                data = sr.json()
+                assert data["visual_style"] == "invalid_xyz"
+                assert data["resolved_style"] == "ethereal_default"
+                return
+            time.sleep(0.5)
+        pytest.fail("ML generate did not complete")
+
+    def test_batch_generate_mixed_styles(self, client):
+        ts = int(time.time())
+        r = client.post(
+            f"{ML_URL}/generate/batch",
+            json=[
+                {
+                    "job_id": f"meta-batch-valid-{ts}",
+                    "shot_id": "00000000-0000-0000-0000-000000000001",
+                    "project_id": "00000000-0000-0000-0000-000000000001",
+                    "prompt": "valid style",
+                    "visual_style": "cosmic_cinematic",
+                    "model": "cosmic_cinematic",
+                },
+                {
+                    "job_id": f"meta-batch-invalid-{ts}",
+                    "shot_id": "00000000-0000-0000-0000-000000000002",
+                    "project_id": "00000000-0000-0000-0000-000000000001",
+                    "prompt": "invalid style",
+                    "visual_style": "nonexistent",
+                    "model": "ethereal_default",
+                },
+            ],
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["batch_size"] == 2
+        valid_job = data["jobs"][0]
+        invalid_job = data["jobs"][1]
+        assert valid_job["visual_style"] == "cosmic_cinematic"
+        assert valid_job["resolved_style"] == "cosmic_cinematic"
+        assert invalid_job["visual_style"] == "nonexistent"
+        assert invalid_job["resolved_style"] == "ethereal_default"
+
+    def test_render_explicit_style_metadata(self, client):
+        job_id = f"meta-render-explicit-{int(time.time())}"
+        r = client.post(
+            f"{UNITY_URL}/render",
+            json={
+                "job_id": job_id,
+                "project_id": "00000000-0000-0000-0000-000000000001",
+                "scene": {"project_id": "test", "shots": []},
+                "visual_style": "neon_ritual",
+                "template": "neon_ritual",
+            },
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["visual_style"] == "neon_ritual"
+        assert data["resolved_style"] == "neon_ritual"
+
+    def test_render_invalid_style_shows_fallback(self, client):
+        job_id = f"meta-render-invalid-{int(time.time())}"
+        r = client.post(
+            f"{UNITY_URL}/render",
+            json={
+                "job_id": job_id,
+                "project_id": "00000000-0000-0000-0000-000000000001",
+                "scene": {"project_id": "test", "shots": []},
+                "visual_style": "bad_style",
+                "template": "ethereal_default",
+            },
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["visual_style"] == "bad_style"
+        assert data["resolved_style"] == "ethereal_default"
+
+    def test_preview_render_explicit_style(self, client):
+        job_id = f"meta-preview-explicit-{int(time.time())}"
+        r = client.post(
+            f"{UNITY_URL}/render/preview",
+            json={
+                "job_id": job_id,
+                "project_id": "00000000-0000-0000-0000-000000000001",
+                "scene": {"project_id": "test", "shots": []},
+                "visual_style": "luminous_dreamscape",
+                "template": "ethereal_default",
+            },
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["visual_style"] == "luminous_dreamscape"
+        assert data["resolved_style"] == "luminous_dreamscape"
+
+    def test_preview_render_invalid_style_fallback(self, client):
+        job_id = f"meta-preview-invalid-{int(time.time())}"
+        r = client.post(
+            f"{UNITY_URL}/render/preview",
+            json={
+                "job_id": job_id,
+                "project_id": "00000000-0000-0000-0000-000000000001",
+                "scene": {"project_id": "test", "shots": []},
+                "visual_style": "totally_wrong",
+                "template": "ethereal_default",
+            },
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["visual_style"] == "totally_wrong"
+        assert data["resolved_style"] == "ethereal_default"
+
+    def test_pipeline_propagates_style_metadata(self, client):
+        r = client.post(
+            f"{BASE_URL}/projects",
+            json={
+                "name": "Metadata Pipeline",
+                "visual_style": "spectral_mythology",
+                "shots": [{"prompt": "style metadata test", "order": 1}],
+            },
+            headers=HEADERS,
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["visual_style"] == "spectral_mythology"
+        assert data["resolved_style"] == "spectral_mythology"
+        project_id = data["id"]
+
+        r = client.post(f"{BASE_URL}/projects/{project_id}/render", headers=HEADERS)
+        assert r.status_code == 200
+        assert r.json()["visual_style"] == "spectral_mythology"
+        assert r.json()["resolved_style"] == "spectral_mythology"
+
+        for _ in range(60):
+            r = client.get(f"{BASE_URL}/projects/{project_id}/status", headers=HEADERS)
+            data = r.json()
+            if data["project_status"] in ("completed", "failed"):
+                assert data["project_status"] == "completed"
+                assert data["visual_style"] == "spectral_mythology"
+                assert data["resolved_style"] == "spectral_mythology"
+                return
+            time.sleep(1)
+        pytest.fail("Pipeline with style metadata timed out")
+
+
 class TestLightModePipeline:
     def test_full_pipeline_in_light_mode(self, client):
         r = client.post(

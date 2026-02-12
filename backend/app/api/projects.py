@@ -122,6 +122,8 @@ async def get_status(project_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     return ProjectStatusResponse(
         project_id=project.id,
         project_status=project.status,
+        visual_style=project.visual_style,
+        resolved_style=project.visual_style,
         shots=shot_responses,
         ml_jobs=all_ml_jobs,
         render_jobs=render_responses,

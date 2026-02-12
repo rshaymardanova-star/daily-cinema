@@ -185,6 +185,8 @@ class RenderStatus(BaseModel):
     status: str
     video_url: str = ""
     template: str = ""
+    visual_style: str = ""
+    resolved_style: str = ""
     duration_ms: float = 0
     mock: bool = False
 
@@ -365,22 +367,24 @@ def render_video(frames: list[str], work_dir: str, template_name: str = DEFAULT_
     return output_path
 
 
-def run_render_mock(job_id: str, project_id: str, scene: dict, template_name: str, visual_style: str = "ethereal_default"):
+def run_render_mock(job_id: str, project_id: str, scene: dict, template_name: str, visual_style: str = "ethereal_default", original_style: str = ""):
     logger.info("[ACU_MODE=light] Mock render for job %s (template=%s, style=%s) — skipping FFmpeg/HDRP", job_id, template_name, visual_style)
     jobs[job_id] = {
         "job_id": job_id,
         "status": "completed",
         "video_url": f"mock://dailycinema/projects/{project_id}/render/final.mp4",
         "template": template_name,
+        "visual_style": original_style or visual_style,
+        "resolved_style": visual_style,
         "duration_ms": 0.1,
         "mock": True,
     }
     RENDER_TOTAL.labels(template=template_name, status="completed").inc()
 
 
-def run_render(job_id: str, project_id: str, scene: dict, template_name: str, visual_style: str = "ethereal_default"):
+def run_render(job_id: str, project_id: str, scene: dict, template_name: str, visual_style: str = "ethereal_default", original_style: str = ""):
     if settings.acu_mode == "light":
-        run_render_mock(job_id, project_id, scene, template_name, visual_style)
+        run_render_mock(job_id, project_id, scene, template_name, visual_style, original_style)
         return
 
     ck = _render_cache_key(scene, template_name, visual_style)
@@ -393,6 +397,8 @@ def run_render(job_id: str, project_id: str, scene: dict, template_name: str, vi
             "status": "completed",
             "video_url": cached["video_url"],
             "template": template_name,
+            "visual_style": original_style or visual_style,
+            "resolved_style": visual_style,
             "duration_ms": 0.1,
             "mock": False,
         }
@@ -426,6 +432,8 @@ def run_render(job_id: str, project_id: str, scene: dict, template_name: str, vi
                 "status": "completed",
                 "video_url": video_url,
                 "template": template_name,
+                "visual_style": original_style or visual_style,
+                "resolved_style": visual_style,
                 "duration_ms": duration,
                 "mock": False,
             }
@@ -443,6 +451,8 @@ def run_render(job_id: str, project_id: str, scene: dict, template_name: str, vi
             "status": "failed",
             "video_url": "",
             "template": template_name,
+            "visual_style": original_style or visual_style,
+            "resolved_style": visual_style,
             "duration_ms": 0,
             "mock": False,
         }
@@ -456,6 +466,7 @@ async def render(req: RenderRequest):
     if not template or template not in TEMPLATES:
         logger.warning("Invalid template '%s' in render request, falling back to '%s'", req.template, DEFAULT_TEMPLATE)
         template = DEFAULT_TEMPLATE
+    original_style = req.visual_style
     visual_style = req.visual_style
     if not visual_style or visual_style not in VISUAL_HDRP_PROFILES:
         logger.warning("Invalid visual_style '%s' in render request, falling back to 'ethereal_default'", req.visual_style)
@@ -467,9 +478,11 @@ async def render(req: RenderRequest):
         "status": "processing",
         "video_url": "",
         "template": template,
+        "visual_style": original_style,
+        "resolved_style": visual_style,
         "duration_ms": 0,
     }
-    executor.submit(run_render, req.job_id, req.project_id, req.scene, template, visual_style)
+    executor.submit(run_render, req.job_id, req.project_id, req.scene, template, visual_style, original_style)
     return RenderStatus(**jobs[req.job_id])
 
 
@@ -510,19 +523,25 @@ async def readiness():
 
 @app.post("/render/preview", response_model=RenderStatus)
 async def render_preview(req: RenderRequest):
-    visual_style = req.visual_style or "ethereal_default"
+    original_style = req.visual_style
+    visual_style = req.visual_style
+    if not visual_style or visual_style not in VISUAL_HDRP_PROFILES:
+        logger.warning("Invalid visual_style '%s' in preview request, falling back to 'ethereal_default'", req.visual_style)
+        visual_style = "ethereal_default"
     jobs[req.job_id] = {
         "job_id": req.job_id,
         "status": "processing",
         "video_url": "",
         "template": "micro_preview",
+        "visual_style": original_style,
+        "resolved_style": visual_style,
         "duration_ms": 0,
     }
-    executor.submit(run_render_preview, req.job_id, req.project_id, req.scene, visual_style)
+    executor.submit(run_render_preview, req.job_id, req.project_id, req.scene, visual_style, original_style)
     return RenderStatus(**jobs[req.job_id])
 
 
-def run_render_preview(job_id: str, project_id: str, scene: dict, visual_style: str):
+def run_render_preview(job_id: str, project_id: str, scene: dict, visual_style: str, original_style: str = ""):
     start = time.monotonic()
     JOBS_IN_PROGRESS.inc()
     try:
@@ -543,6 +562,8 @@ def run_render_preview(job_id: str, project_id: str, scene: dict, visual_style: 
                 "status": "completed",
                 "video_url": video_url,
                 "template": "micro_preview",
+                "visual_style": original_style or visual_style,
+                "resolved_style": visual_style,
                 "duration_ms": duration,
                 "mock": False,
             }
@@ -554,6 +575,8 @@ def run_render_preview(job_id: str, project_id: str, scene: dict, visual_style: 
             "status": "failed",
             "video_url": "",
             "template": "micro_preview",
+            "visual_style": original_style or visual_style,
+            "resolved_style": visual_style,
             "duration_ms": 0,
             "mock": False,
         }

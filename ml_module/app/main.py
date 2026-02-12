@@ -174,6 +174,8 @@ class JobStatus(BaseModel):
     status: str
     frame_urls: list[str] = []
     model: str = ""
+    visual_style: str = ""
+    resolved_style: str = ""
     duration_ms: float = 0
     mock: bool = False
 
@@ -330,7 +332,7 @@ def generate_interpolated_frames(prompt: str, shot_id: str, num_frames: int, mod
     return frames
 
 
-def run_generation_mock(job_id: str, shot_id: str, project_id: str, prompt: str, model: str, num_frames: int, visual_style: str = DEFAULT_VISUAL_STYLE):
+def run_generation_mock(job_id: str, shot_id: str, project_id: str, prompt: str, model: str, num_frames: int, visual_style: str = DEFAULT_VISUAL_STYLE, original_style: str = ""):
     logger.info("[ACU_MODE=light] Mock generation for job %s (model=%s, style=%s, frames=%d) — skipping real inference", job_id, model, visual_style, num_frames)
     mock_urls = [
         f"mock://dailycinema/projects/{project_id}/ml/shot_{shot_id}/frame_{i + 1:03d}.png"
@@ -341,15 +343,17 @@ def run_generation_mock(job_id: str, shot_id: str, project_id: str, prompt: str,
         "status": "completed",
         "frame_urls": mock_urls,
         "model": model,
+        "visual_style": original_style or visual_style,
+        "resolved_style": visual_style,
         "duration_ms": 0.1,
         "mock": True,
     }
     GENERATION_TOTAL.labels(model=model, status="completed").inc()
 
 
-def run_generation(job_id: str, shot_id: str, project_id: str, prompt: str, model: str, num_frames: int, visual_style: str = DEFAULT_VISUAL_STYLE):
+def run_generation(job_id: str, shot_id: str, project_id: str, prompt: str, model: str, num_frames: int, visual_style: str = DEFAULT_VISUAL_STYLE, original_style: str = ""):
     if settings.acu_mode == "light":
-        run_generation_mock(job_id, shot_id, project_id, prompt, model, num_frames, visual_style)
+        run_generation_mock(job_id, shot_id, project_id, prompt, model, num_frames, visual_style, original_style)
         return
 
     ck = _cache_key(prompt, visual_style, model, num_frames)
@@ -362,6 +366,8 @@ def run_generation(job_id: str, shot_id: str, project_id: str, prompt: str, mode
             "status": "completed",
             "frame_urls": cached["frame_urls"],
             "model": model,
+            "visual_style": original_style or visual_style,
+            "resolved_style": visual_style,
             "duration_ms": 0.1,
             "mock": False,
         }
@@ -394,6 +400,8 @@ def run_generation(job_id: str, shot_id: str, project_id: str, prompt: str, mode
             "status": "completed",
             "frame_urls": frame_urls,
             "model": model,
+            "visual_style": original_style or visual_style,
+            "resolved_style": visual_style,
             "duration_ms": duration,
             "mock": False,
         }
@@ -410,6 +418,8 @@ def run_generation(job_id: str, shot_id: str, project_id: str, prompt: str, mode
             "status": "failed",
             "frame_urls": [],
             "model": model,
+            "visual_style": original_style or visual_style,
+            "resolved_style": visual_style,
             "duration_ms": 0,
             "mock": False,
         }
@@ -423,18 +433,21 @@ async def generate(req: GenerateRequest):
     if not model or model not in MODELS:
         logger.warning("Invalid model '%s' in generate request, falling back to '%s'", req.model, DEFAULT_MODEL)
         model = DEFAULT_MODEL
+    original_style = req.visual_style
+    visual_style = req.visual_style
+    if not visual_style or visual_style not in VISUAL_STYLES:
+        logger.warning("Invalid visual_style '%s' in generate request, falling back to '%s'", req.visual_style, DEFAULT_VISUAL_STYLE)
+        visual_style = DEFAULT_VISUAL_STYLE
     jobs[req.job_id] = {
         "job_id": req.job_id,
         "status": "processing",
         "frame_urls": [],
         "model": model,
+        "visual_style": original_style,
+        "resolved_style": visual_style,
         "duration_ms": 0,
     }
-    visual_style = req.visual_style
-    if not visual_style or visual_style not in VISUAL_STYLES:
-        logger.warning("Invalid visual_style '%s' in generate request, falling back to '%s'", req.visual_style, DEFAULT_VISUAL_STYLE)
-        visual_style = DEFAULT_VISUAL_STYLE
-    executor.submit(run_generation, req.job_id, req.shot_id, req.project_id, req.prompt, model, req.num_frames, visual_style)
+    executor.submit(run_generation, req.job_id, req.shot_id, req.project_id, req.prompt, model, req.num_frames, visual_style, original_style)
     return JobStatus(**jobs[req.job_id])
 
 
@@ -445,6 +458,7 @@ async def generate_batch(requests: list[GenerateRequest]):
         model = req.model
         if not model or model not in MODELS:
             model = DEFAULT_MODEL
+        original_style = req.visual_style
         visual_style = req.visual_style
         if not visual_style or visual_style not in VISUAL_STYLES:
             visual_style = DEFAULT_VISUAL_STYLE
@@ -453,6 +467,8 @@ async def generate_batch(requests: list[GenerateRequest]):
             "status": "processing",
             "frame_urls": [],
             "model": model,
+            "visual_style": original_style,
+            "resolved_style": visual_style,
             "duration_ms": 0,
         }
         with batch_lock:
@@ -464,8 +480,9 @@ async def generate_batch(requests: list[GenerateRequest]):
                 "model": model,
                 "num_frames": req.num_frames,
                 "visual_style": visual_style,
+                "original_style": original_style,
             })
-        results.append({"job_id": req.job_id, "status": "queued"})
+        results.append({"job_id": req.job_id, "status": "queued", "visual_style": original_style, "resolved_style": visual_style})
     logger.info("Enqueued batch of %d ML jobs", len(requests))
     return {"batch_size": len(requests), "jobs": results}
 

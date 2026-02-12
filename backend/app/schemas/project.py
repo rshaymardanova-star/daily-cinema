@@ -2,7 +2,7 @@ import logging
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -82,12 +82,19 @@ class ProjectResponse(BaseModel):
     name: str
     description: str
     visual_style: str = "ethereal_default"
+    resolved_style: str = ""
     status: str
     error_message: str = ""
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+    @model_validator(mode="after")
+    def set_resolved_style(self):
+        if not self.resolved_style:
+            self.resolved_style = self.visual_style
+        return self
 
 
 class ProjectDetailResponse(ProjectResponse):
@@ -104,6 +111,14 @@ class TimelineResponse(BaseModel):
 class ProjectStatusResponse(BaseModel):
     project_id: uuid.UUID
     project_status: str
+    visual_style: str = "ethereal_default"
+    resolved_style: str = ""
     shots: list[ShotResponse]
     ml_jobs: list[MLJobResponse]
     render_jobs: list[RenderJobResponse]
+
+    @model_validator(mode="after")
+    def set_resolved_style(self):
+        if not self.resolved_style:
+            self.resolved_style = self.visual_style
+        return self
