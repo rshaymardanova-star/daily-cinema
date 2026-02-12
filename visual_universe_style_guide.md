@@ -286,3 +286,153 @@ curl -X POST http://localhost:8000/projects \
 curl -X POST http://localhost:8000/projects/{id}/render \
   -H "X-API-Key: dc-prod-api-key-change-me"
 ```
+
+---
+
+## 11. ACU Optimization
+
+### ACU_MODE
+
+The `ACU_MODE` environment variable controls compute unit usage across all services.
+
+| Mode | ML Module | Unity Worker | Use Case |
+|---|---|---|---|
+| `full` | Real inference, GCS upload | Real FFmpeg render, GCS upload | Production, E2E tests |
+| `light` | Mock frame URLs (instant, no PIL/GCS) | Mock video URL (instant, no FFmpeg/GCS) | Unit tests, dev iteration, CI |
+
+Mock responses preserve the same JSON schema as real responses but include a `mock: true` flag and `duration_ms: 0.1`.
+
+### Mock Response Examples
+
+**ML Mock (ACU_MODE=light):**
+```json
+{
+  "job_id": "abc-123",
+  "status": "completed",
+  "frame_urls": ["mock://dailycinema/projects/proj-1/ml/shot_001/frame_001.png"],
+  "model": "ethereal_default",
+  "duration_ms": 0.1,
+  "mock": true
+}
+```
+
+**Unity Mock (ACU_MODE=light):**
+```json
+{
+  "job_id": "render-456",
+  "status": "completed",
+  "video_url": "mock://dailycinema/projects/proj-1/render/final.mp4",
+  "template": "ethereal_default",
+  "duration_ms": 0.1,
+  "mock": true
+}
+```
+
+### Caching Architecture
+
+Both ML and Unity services implement hash-based output caching to avoid redundant compute.
+
+```
+Request arrives
+    |
+    v
+Compute cache key = SHA256(prompt + visual_style + model + num_frames)
+    |
+    v
+[Cache hit?] --yes--> Return cached result (duration_ms: 0.1)
+    |
+    no
+    v
+Run real inference/render
+    |
+    v
+Store result in cache
+    |
+    v
+Return result
+```
+
+**ML cache key:** `sha256(json(prompt, visual_style, model, num_frames))`
+**Unity cache key:** `sha256(json(sorted_frame_urls, template, visual_style))`
+
+### ML Batching
+
+The ML module supports batch processing to reduce GPU overhead:
+
+- Background batch worker collects requests over a 0.5s window
+- Processes up to `batch_size` (default 8) jobs per batch
+- `/generate/batch` endpoint accepts an array of `GenerateRequest` objects
+- Prometheus metrics: `ml_batch_total`, `ml_batch_size`
+
+```bash
+# Batch submission
+curl -X POST http://localhost:8001/generate/batch \
+  -H "Content-Type: application/json" \
+  -d '[
+    {"job_id": "batch-1", "shot_id": "s1", "project_id": "p1", "prompt": "scene one"},
+    {"job_id": "batch-2", "shot_id": "s2", "project_id": "p1", "prompt": "scene two"}
+  ]'
+```
+
+### Unity Micro-Pipeline
+
+A minimal render path for low-cost previews:
+
+| Property | Full Render | Micro-Pipeline |
+|---|---|---|
+| Resolution | 1920x1080 | 640x360 |
+| Preset | medium/slow | ultrafast |
+| CRF | 18-23 | 30 |
+| Post-processing | Full HDRP chain | None |
+| FPS | 24-30 | 15 |
+| Endpoint | `/render` | `/render/preview` |
+
+### ACU Budgeting
+
+The orchestrator tracks ACU consumption per pipeline task.
+
+| Operation | ACU Cost |
+|---|---|
+| ML job (full) | 10.0 |
+| Render job (full) | 25.0 |
+| Render preview | 5.0 |
+| Mock job (light) | 0.1 |
+
+**Budget behavior:**
+- Default budget per task: 100 ACU (`ACU_BUDGET_PER_TASK`)
+- Warning at 80% usage (`ACU_WARNING_THRESHOLD`)
+- Automatic fallback to light mode when budget exceeded
+- Prometheus metrics: `dailycinema_acu_budget_used`, `dailycinema_acu_budget_warnings_total`, `dailycinema_acu_fallback_total`
+
+### Style Validation Endpoint
+
+Validate a visual style without running ML or Unity:
+
+```bash
+curl -X POST http://localhost:8000/styles/validate \
+  -H "X-API-Key: dc-prod-api-key-change-me" \
+  -H "Content-Type: application/json" \
+  -d '{"visual_style": "cosmic_cinematic"}'
+```
+
+Response includes ML keywords, HDRP preset parameters, and FFmpeg preset for the resolved style.
+
+### Test Strategy
+
+| Test Category | ACU_MODE | Command | Duration |
+|---|---|---|---|
+| Fast (unit) | `light` | `make test-fast` | ~3s |
+| Full (E2E) | `full` | `make test-full` | ~2min |
+
+Fast tests validate mock schemas, validation logic, and pipeline flow without real inference.
+Full tests run the complete pipeline with real ML generation and Unity rendering.
+
+### ACU Usage Comparison
+
+| Scenario | Before (ACU_MODE=full) | After (ACU_MODE=light) | Savings |
+|---|---|---|---|
+| Unit test suite (23 tests) | ~230 ACU | ~2.3 ACU | **99%** |
+| Single pipeline run | ~35 ACU | ~0.2 ACU | **99.4%** |
+| Cached pipeline re-run | ~35 ACU | ~0.2 ACU (cache hit) | **99.4%** |
+| Dev iteration (10 runs) | ~350 ACU | ~2.0 ACU | **99.4%** |
+| CI pipeline (fast tests) | ~230 ACU | ~2.3 ACU | **99%** |
