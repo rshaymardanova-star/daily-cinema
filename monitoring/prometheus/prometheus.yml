@@ -1,0 +1,29 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "backend"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["backend:8000"]
+        labels:
+          service: backend
+
+  - job_name: "ml-module"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["ml:8001"]
+        labels:
+          service: ml-module
+
+  - job_name: "unity-worker"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["unity:8002"]
+        labels:
+          service: unity-worker
+
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]

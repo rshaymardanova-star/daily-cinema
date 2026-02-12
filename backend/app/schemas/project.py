@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ShotCreate(BaseModel):
@@ -10,9 +10,9 @@ class ShotCreate(BaseModel):
 
 
 class ProjectCreate(BaseModel):
-    name: str
-    description: str = ""
-    shots: list[ShotCreate] = []
+    name: str = Field(..., min_length=1, max_length=255)
+    description: str = Field("", max_length=5000)
+    shots: list[ShotCreate] = Field(default_factory=list, max_length=100)
 
 
 class ShotResponse(BaseModel):
@@ -31,6 +31,10 @@ class MLJobResponse(BaseModel):
     shot_id: uuid.UUID
     status: str
     frame_urls: str
+    retry_count: int = 0
+    error_message: str = ""
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -42,6 +46,10 @@ class RenderJobResponse(BaseModel):
     project_id: uuid.UUID
     status: str
     video_url: str
+    retry_count: int = 0
+    error_message: str = ""
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -53,6 +61,7 @@ class ProjectResponse(BaseModel):
     name: str
     description: str
     status: str
+    error_message: str = ""
     created_at: datetime
     updated_at: datetime
 
