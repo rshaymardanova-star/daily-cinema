@@ -23,7 +23,7 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 
 @router.post("", response_model=ProjectResponse)
 async def create_project(payload: ProjectCreate, db: AsyncSession = Depends(get_db)):
-    project = Project(name=payload.name, description=payload.description)
+    project = Project(name=payload.name, description=payload.description, visual_style=payload.visual_style)
     db.add(project)
     await db.flush()
 

@@ -12,6 +12,7 @@ class ShotCreate(BaseModel):
 class ProjectCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: str = Field("", max_length=5000)
+    visual_style: str = Field("ethereal_default", max_length=100)
     shots: list[ShotCreate] = Field(default_factory=list, max_length=100)
 
 
@@ -60,6 +61,7 @@ class ProjectResponse(BaseModel):
     id: uuid.UUID
     name: str
     description: str
+    visual_style: str = "ethereal_default"
     status: str
     error_message: str = ""
     created_at: datetime

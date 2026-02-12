@@ -30,12 +30,69 @@ GENERATION_DURATION = Histogram("ml_generation_duration_seconds", "Frame generat
 GENERATION_TOTAL = Counter("ml_generation_total", "Total generations", ["model", "status"])
 JOBS_IN_PROGRESS = Gauge("ml_jobs_in_progress", "ML jobs in progress")
 
+VISUAL_STYLES = {
+    "ethereal_default": {
+        "description": "Standard ethereal cosmic style - meditative calm",
+        "base_color": (10, 10, 46),
+        "gradient_start": (255, 105, 180),
+        "gradient_end": (0, 206, 209),
+        "accent": (138, 43, 226),
+        "glow_color": (230, 230, 250),
+        "fog_opacity": 60,
+        "keywords": ["ethereal light", "spectral glow", "volumetric fog", "dreamlike atmosphere"],
+    },
+    "cosmic_cinematic": {
+        "description": "High-contrast cinematic cosmic - epic transcendence",
+        "base_color": (5, 5, 30),
+        "gradient_start": (148, 0, 211),
+        "gradient_end": (0, 191, 255),
+        "accent": (255, 215, 0),
+        "glow_color": (200, 200, 255),
+        "fog_opacity": 80,
+        "keywords": ["cosmic aura", "neon mist", "transcendent energy", "spectral glow"],
+    },
+    "luminous_dreamscape": {
+        "description": "Soft dreamy pastels - dreamlike serenity",
+        "base_color": (20, 15, 40),
+        "gradient_start": (220, 208, 255),
+        "gradient_end": (255, 179, 71),
+        "accent": (255, 105, 180),
+        "glow_color": (255, 240, 255),
+        "fog_opacity": 100,
+        "keywords": ["dreamlike atmosphere", "iridescent fabric", "ethereal light", "mythical harmony"],
+    },
+    "spectral_mythology": {
+        "description": "Mythical creature-focused - ancient wisdom",
+        "base_color": (8, 12, 35),
+        "gradient_start": (64, 224, 208),
+        "gradient_end": (255, 215, 0),
+        "accent": (0, 206, 209),
+        "glow_color": (180, 255, 230),
+        "fog_opacity": 70,
+        "keywords": ["mythical harmony", "spectral glow", "cosmic aura", "volumetric fog"],
+    },
+    "neon_ritual": {
+        "description": "Ritualistic energy ceremony - spiritual ritual",
+        "base_color": (15, 5, 30),
+        "gradient_start": (138, 43, 226),
+        "gradient_end": (255, 215, 0),
+        "accent": (255, 20, 147),
+        "glow_color": (200, 150, 255),
+        "fog_opacity": 50,
+        "keywords": ["transcendent energy", "neon mist", "cosmic aura", "spectral glow"],
+    },
+}
+
 MODELS = {
     "placeholder_v1": {"description": "Basic placeholder with text overlay", "color": (30, 30, 60)},
     "placeholder_v2": {"description": "Gradient placeholder with cinematic bars", "color": (20, 40, 80)},
     "placeholder_artistic": {"description": "Artistic style placeholder", "color": (60, 20, 40)},
 }
-DEFAULT_MODEL = "placeholder_v1"
+for style_name, style_cfg in VISUAL_STYLES.items():
+    MODELS[style_name] = {"description": style_cfg["description"], "color": style_cfg["base_color"]}
+
+DEFAULT_MODEL = "ethereal_default"
+DEFAULT_VISUAL_STYLE = "ethereal_default"
 
 
 class Settings(BaseSettings):
@@ -65,7 +122,8 @@ class GenerateRequest(BaseModel):
     shot_id: str
     project_id: str
     prompt: str = ""
-    model: str = "placeholder_v1"
+    model: str = "ethereal_default"
+    visual_style: str = "ethereal_default"
     num_frames: int = 1
 
 
@@ -108,9 +166,76 @@ def warmup_model(model_name: str):
     logger.info("Model %s warmed up", model_name)
 
 
-def generate_placeholder_frame(prompt: str, shot_id: str, frame_num: int, model_name: str = DEFAULT_MODEL) -> bytes:
+def _draw_spectral_gradient(img: Image.Image, style: dict, frame_num: int):
+    width, height = img.size
+    gs = style["gradient_start"]
+    ge = style["gradient_end"]
+    phase = (frame_num * 0.05) % 1.0
+    pixels = img.load()
+    for y in range(height):
+        t = (y / height + phase) % 1.0
+        r = int(gs[0] + (ge[0] - gs[0]) * t)
+        g = int(gs[1] + (ge[1] - gs[1]) * t)
+        b = int(gs[2] + (ge[2] - gs[2]) * t)
+        for x in range(width):
+            base = pixels[x, y]
+            blend = 0.3
+            nr = int(base[0] * (1 - blend) + r * blend)
+            ng = int(base[1] * (1 - blend) + g * blend)
+            nb = int(base[2] * (1 - blend) + b * blend)
+            pixels[x, y] = (nr, ng, nb)
+
+
+def _draw_fog_overlay(draw: ImageDraw.Draw, img: Image.Image, style: dict):
+    fog_layer = Image.new("RGBA", img.size, (*style["glow_color"], style["fog_opacity"]))
+    img.paste(Image.alpha_composite(img.convert("RGBA"), fog_layer).convert("RGB"))
+
+
+def _draw_energy_particles(draw: ImageDraw.Draw, style: dict, frame_num: int):
+    accent = style["accent"]
+    glow = style["glow_color"]
+    random.seed(frame_num * 42)
+    for _ in range(40):
+        x = random.randint(50, 1870)
+        y = random.randint(50, 1030)
+        r = random.randint(2, 12)
+        c = accent if random.random() > 0.5 else glow
+        alpha_c = (*c, random.randint(80, 200))
+        draw.ellipse([(x - r, y - r), (x + r, y + r)], fill=alpha_c[:3])
+    for _ in range(8):
+        x = random.randint(200, 1720)
+        y = random.randint(200, 880)
+        r = random.randint(30, 80)
+        draw.ellipse([(x - r, y - r), (x + r, y + r)], fill=(*glow, 20)[:3])
+
+
+def _draw_vignette(draw: ImageDraw.Draw, img: Image.Image):
+    w, h = img.size
+    for i in range(80):
+        alpha = int(2.5 * i)
+        draw.rectangle([(i, i), (w - i, h - i)], outline=(0, 0, 0, alpha)[:3])
+
+
+def _enrich_prompt(prompt: str, style: dict) -> str:
+    keywords = style.get("keywords", [])
+    enriched = prompt
+    for kw in keywords:
+        if kw.lower() not in prompt.lower():
+            enriched = f"{enriched}, {kw}"
+            break
+    return enriched
+
+
+def generate_placeholder_frame(prompt: str, shot_id: str, frame_num: int, model_name: str = DEFAULT_MODEL, visual_style: str = DEFAULT_VISUAL_STYLE) -> bytes:
+    style = VISUAL_STYLES.get(visual_style)
     model_config = MODELS.get(model_name, MODELS[DEFAULT_MODEL])
-    base_color = model_config["color"]
+
+    if style:
+        base_color = style["base_color"]
+        enriched_prompt = _enrich_prompt(prompt, style)
+    else:
+        base_color = model_config["color"]
+        enriched_prompt = prompt
 
     r_shift = (frame_num * 7) % 30
     g_shift = (frame_num * 11) % 30
@@ -119,17 +244,28 @@ def generate_placeholder_frame(prompt: str, shot_id: str, frame_num: int, model_
     img = Image.new("RGB", (1920, 1080), color=color)
     draw = ImageDraw.Draw(img)
 
+    if style:
+        _draw_spectral_gradient(img, style, frame_num)
+        draw = ImageDraw.Draw(img)
+        _draw_energy_particles(draw, style, frame_num)
+        _draw_vignette(draw, img)
+
     if model_name == "placeholder_v2":
         draw.rectangle([(0, 0), (1920, 120)], fill=(0, 0, 0))
         draw.rectangle([(0, 960), (1920, 1080)], fill=(0, 0, 0))
 
-    draw.rectangle([(60, 60), (1860, 1020)], outline=(100, 200, 255), width=3)
-    draw.text((150, 150), "DAILY CINEMA", fill=(255, 255, 255))
-    draw.text((150, 250), f"Model: {model_name}", fill=(200, 200, 200))
+    border_color = style["accent"] if style else (100, 200, 255)
+    draw.rectangle([(60, 60), (1860, 1020)], outline=border_color, width=2)
+
+    text_color = style["glow_color"] if style else (255, 255, 255)
+    draw.text((150, 150), "DAILY CINEMA", fill=text_color)
+    draw.text((150, 250), f"Style: {visual_style}", fill=text_color)
     draw.text((150, 350), f"Shot: {shot_id[:8]}", fill=(200, 200, 200))
     draw.text((150, 450), f"Frame: {frame_num:03d}", fill=(200, 200, 200))
-    draw.text((150, 550), f"Prompt: {prompt[:60]}", fill=(180, 180, 255))
-    draw.text((150, 700), f"[ {model_config['description']} ]", fill=(255, 200, 100))
+    draw.text((150, 550), f"Prompt: {enriched_prompt[:80]}", fill=border_color)
+
+    desc = style["description"] if style else model_config["description"]
+    draw.text((150, 700), f"[ {desc} ]", fill=(255, 200, 100))
 
     if model_name == "placeholder_artistic":
         for i in range(20):
@@ -144,21 +280,21 @@ def generate_placeholder_frame(prompt: str, shot_id: str, frame_num: int, model_
     return buf.getvalue()
 
 
-def generate_interpolated_frames(prompt: str, shot_id: str, num_frames: int, model_name: str) -> list[bytes]:
+def generate_interpolated_frames(prompt: str, shot_id: str, num_frames: int, model_name: str, visual_style: str = DEFAULT_VISUAL_STYLE) -> list[bytes]:
     frames = []
     for i in range(num_frames):
-        frames.append(generate_placeholder_frame(prompt, shot_id, i + 1, model_name))
+        frames.append(generate_placeholder_frame(prompt, shot_id, i + 1, model_name, visual_style))
     return frames
 
 
-def run_generation(job_id: str, shot_id: str, project_id: str, prompt: str, model: str, num_frames: int):
+def run_generation(job_id: str, shot_id: str, project_id: str, prompt: str, model: str, num_frames: int, visual_style: str = DEFAULT_VISUAL_STYLE):
     start = time.monotonic()
     JOBS_IN_PROGRESS.inc()
     try:
         warmup_model(model)
-        logger.info("Generating %d frame(s) for job %s with model %s", num_frames, job_id, model)
+        logger.info("Generating %d frame(s) for job %s with model %s style %s", num_frames, job_id, model, visual_style)
 
-        frames = generate_interpolated_frames(prompt, shot_id, num_frames, model)
+        frames = generate_interpolated_frames(prompt, shot_id, num_frames, model, visual_style)
 
         client = get_gcs_client()
         bucket = ensure_bucket(client, settings.gcs_bucket)
@@ -207,7 +343,8 @@ async def generate(req: GenerateRequest):
         "model": model,
         "duration_ms": 0,
     }
-    executor.submit(run_generation, req.job_id, req.shot_id, req.project_id, req.prompt, model, req.num_frames)
+    visual_style = req.visual_style if req.visual_style in VISUAL_STYLES else DEFAULT_VISUAL_STYLE
+    executor.submit(run_generation, req.job_id, req.shot_id, req.project_id, req.prompt, model, req.num_frames, visual_style)
     return JobStatus(**jobs[req.job_id])
 
 
@@ -221,6 +358,14 @@ async def get_status(job_id: str):
 @app.get("/models")
 async def list_models():
     return {"models": {k: v["description"] for k, v in MODELS.items()}, "default": DEFAULT_MODEL}
+
+
+@app.get("/styles")
+async def list_styles():
+    return {
+        "styles": {k: {"description": v["description"], "keywords": v["keywords"]} for k, v in VISUAL_STYLES.items()},
+        "default": DEFAULT_VISUAL_STYLE,
+    }
 
 
 @app.get("/health/live")

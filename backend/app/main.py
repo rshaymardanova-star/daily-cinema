@@ -28,6 +28,9 @@ async def lifespan(app: FastAPI):
     logger.info("Creating database tables...")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(text(
+            "ALTER TABLE projects ADD COLUMN IF NOT EXISTS visual_style VARCHAR(100) DEFAULT 'ethereal_default'"
+        ))
     logger.info("Database tables created.")
 
     try:

@@ -41,6 +41,8 @@ async def run_pipeline(project_id: uuid.UUID) -> None:
                 logger.error("Project %s not found", project_id)
                 return
 
+            visual_style = project.visual_style or "ethereal_default"
+
             ml_tasks = []
             for shot in project.shots:
                 ml_job = MLJob(shot_id=shot.id, status="pending")
@@ -51,7 +53,7 @@ async def run_pipeline(project_id: uuid.UUID) -> None:
             await db.commit()
 
         ml_results = await asyncio.gather(
-            *[dispatch_ml_job_with_retry(shot, ml_job) for shot, ml_job in ml_tasks],
+            *[dispatch_ml_job_with_retry(shot, ml_job, visual_style) for shot, ml_job in ml_tasks],
             return_exceptions=True,
         )
 
@@ -87,7 +89,7 @@ async def run_pipeline(project_id: uuid.UUID) -> None:
                 await db2.commit()
                 return
 
-            scene_json = build_scene_json(project_id, project.shots, frame_map)
+            scene_json = build_scene_json(project_id, project.shots, frame_map, visual_style)
 
             render_job = RenderJob(
                 project_id=project_id,
@@ -98,7 +100,7 @@ async def run_pipeline(project_id: uuid.UUID) -> None:
             await db2.commit()
             await db2.refresh(render_job)
 
-            render_result = await dispatch_unity_render_with_retry(render_job, scene_json)
+            render_result = await dispatch_unity_render_with_retry(render_job, scene_json, visual_style)
 
             render_job_db = await db2.get(RenderJob, render_job.id)
             if isinstance(render_result, Exception) or not render_result:
@@ -139,7 +141,7 @@ async def run_pipeline(project_id: uuid.UUID) -> None:
         ORCHESTRATOR_LATENCY.observe(elapsed)
 
 
-async def dispatch_ml_job_with_retry(shot: Shot, ml_job: MLJob) -> dict:
+async def dispatch_ml_job_with_retry(shot: Shot, ml_job: MLJob, visual_style: str = "ethereal_default") -> dict:
     max_retries = settings.ml_job_max_retries
     base_delay = settings.ml_job_retry_base_delay
 
@@ -148,7 +150,7 @@ async def dispatch_ml_job_with_retry(shot: Shot, ml_job: MLJob) -> dict:
             start = time.monotonic()
             JOBS_IN_PROGRESS.labels(job_type="ml").inc()
             try:
-                result = await dispatch_ml_job(shot, ml_job)
+                result = await dispatch_ml_job(shot, ml_job, visual_style)
                 ML_JOB_DURATION.labels(status="completed").observe(time.monotonic() - start)
                 return result
             finally:
@@ -173,7 +175,7 @@ async def dispatch_ml_job_with_retry(shot: Shot, ml_job: MLJob) -> dict:
                 raise
 
 
-async def dispatch_ml_job(shot: Shot, ml_job: MLJob) -> dict:
+async def dispatch_ml_job(shot: Shot, ml_job: MLJob, visual_style: str = "ethereal_default") -> dict:
     async with httpx.AsyncClient(timeout=120.0) as client:
         response = await client.post(
             f"{settings.ml_service_url}/generate",
@@ -182,6 +184,8 @@ async def dispatch_ml_job(shot: Shot, ml_job: MLJob) -> dict:
                 "shot_id": str(shot.id),
                 "project_id": str(shot.project_id),
                 "prompt": shot.prompt,
+                "visual_style": visual_style,
+                "model": visual_style,
             },
         )
         response.raise_for_status()
@@ -202,7 +206,7 @@ async def dispatch_ml_job(shot: Shot, ml_job: MLJob) -> dict:
 
 
 def build_scene_json(
-    project_id: uuid.UUID, shots: list[Shot], frame_map: dict
+    project_id: uuid.UUID, shots: list[Shot], frame_map: dict, visual_style: str = "ethereal_default"
 ) -> dict:
     scene_shots = []
     for shot in sorted(shots, key=lambda s: s.order):
@@ -216,11 +220,12 @@ def build_scene_json(
         )
     return {
         "project_id": str(project_id),
+        "visual_style": visual_style,
         "shots": scene_shots,
     }
 
 
-async def dispatch_unity_render_with_retry(render_job: RenderJob, scene_json: dict) -> dict:
+async def dispatch_unity_render_with_retry(render_job: RenderJob, scene_json: dict, visual_style: str = "ethereal_default") -> dict:
     max_retries = settings.render_job_max_retries
     base_delay = settings.render_job_retry_base_delay
 
@@ -229,7 +234,7 @@ async def dispatch_unity_render_with_retry(render_job: RenderJob, scene_json: di
             start = time.monotonic()
             JOBS_IN_PROGRESS.labels(job_type="render").inc()
             try:
-                result = await dispatch_unity_render(render_job, scene_json)
+                result = await dispatch_unity_render(render_job, scene_json, visual_style)
                 RENDER_DURATION.labels(status="completed").observe(time.monotonic() - start)
                 return result
             finally:
@@ -254,7 +259,7 @@ async def dispatch_unity_render_with_retry(render_job: RenderJob, scene_json: di
                 raise
 
 
-async def dispatch_unity_render(render_job: RenderJob, scene_json: dict) -> dict:
+async def dispatch_unity_render(render_job: RenderJob, scene_json: dict, visual_style: str = "ethereal_default") -> dict:
     async with httpx.AsyncClient(timeout=120.0) as client:
         response = await client.post(
             f"{settings.unity_service_url}/render",
@@ -262,6 +267,8 @@ async def dispatch_unity_render(render_job: RenderJob, scene_json: dict) -> dict
                 "job_id": str(render_job.id),
                 "project_id": str(render_job.project_id),
                 "scene": scene_json,
+                "visual_style": visual_style,
+                "template": visual_style,
             },
         )
         response.raise_for_status()
