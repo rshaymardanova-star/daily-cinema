@@ -216,7 +216,7 @@ Characters interact with energy peacefully and consciously.
 - Soft shadows
 - Spectral rimlight
 
-### HDRP Template Profiles
+### HDRP Template Profiles (Summary)
 
 | Template | Bloom | Fog Density | Vignette | Chromatic Aberration | Color Grading |
 |---|---|---|---|---|---|
@@ -225,6 +225,135 @@ Characters interact with energy peacefully and consciously.
 | `luminous_dreamscape` | 1.2, gaussian | 0.30 | 0.20 | 0.05 | Pastel color shift |
 | `spectral_mythology` | 0.9, soft | 0.20 | 0.30 | 0.10 | Warm gold + cool blue split |
 | `neon_ritual` | 1.1, anamorphic | 0.18 | 0.40 | 0.15 | Neon-saturated highlights |
+
+### Detailed HDRP Parameters Per Style
+
+The tables below list every tunable parameter for each visual style. Values are consumed by the Unity Worker (`VISUAL_HDRP_PROFILES`), the backend validation endpoint (`HDRP_PRESETS`), and the FFmpeg post-processing filter chain (`_build_vf_chain`).
+
+#### `ethereal_default`
+
+Standard ethereal cosmic style — meditative calm.
+
+| Parameter | Value | Notes |
+|---|---|---|
+| Bloom intensity | `0.8` | Soft bloom |
+| Fog density | `0.15` | Light volumetric fog |
+| Fog color (via color grading) | Shadows `rgb(20,15,50)`, Midtones `rgb(40,35,80)`, Highlights `rgb(200,180,255)` | Spectral lift in shadows, lavender highlights |
+| Chromatic aberration | `0.08` | Subtle spectral fringe |
+| Vignette intensity | `0.25` | Gentle edge darkening (FFmpeg angle `0.43`) |
+| Saturation | `1.1` | Slightly boosted |
+| Contrast | `0.9` | Softened for dreamy feel |
+| Film grain | `0.02` | Minimal — below FFmpeg noise threshold |
+| FFmpeg FPS | `24` | Standard cinematic |
+| FFmpeg preset | `medium` | Balanced encode speed / quality |
+| FFmpeg CRF | `20` | High quality |
+| FFmpeg extras | — | No gblur (fog < 0.2), no noise (grain ≤ 0.02) |
+
+#### `cosmic_cinematic`
+
+High-contrast cinematic cosmic — epic transcendence.
+
+| Parameter | Value | Notes |
+|---|---|---|
+| Bloom intensity | `1.0` | Anamorphic bloom |
+| Fog density | `0.25` | Dense volumetric fog; triggers FFmpeg `gblur=sigma=0.5` |
+| Fog color (via color grading) | Shadows `rgb(5,5,40)`, Midtones `rgb(30,20,70)`, Highlights `rgb(150,200,255)` | Deep blue shadows, cyan-neon highlights |
+| Chromatic aberration | `0.12` | Moderate spectral fringe |
+| Vignette intensity | `0.35` | Pronounced edge darkening (FFmpeg angle `0.40`) |
+| Saturation | `1.2` | Vivid neon push |
+| Contrast | `1.1` | Punchy cinematic |
+| Film grain | `0.03` | Triggers FFmpeg `noise=alls=3:allf=t` |
+| FFmpeg FPS | `30` | Smooth cinematic motion |
+| FFmpeg preset | `slow` | Higher encode quality |
+| FFmpeg CRF | `18` | Near-lossless |
+| FFmpeg extras | `gblur=sigma=0.5`, `noise=alls=3:allf=t` | Atmospheric haze + film grain |
+
+#### `luminous_dreamscape`
+
+Soft dreamy pastels — dreamlike serenity.
+
+| Parameter | Value | Notes |
+|---|---|---|
+| Bloom intensity | `1.2` | Heaviest bloom — gaussian diffusion |
+| Fog density | `0.30` | Heavy fog; triggers FFmpeg `gblur=sigma=0.5` |
+| Fog color (via color grading) | Shadows `rgb(30,20,45)`, Midtones `rgb(80,60,100)`, Highlights `rgb(255,220,240)` | Warm pastel shift, pink highlights |
+| Chromatic aberration | `0.05` | Very subtle |
+| Vignette intensity | `0.20` | Light vignette (FFmpeg angle `0.44`) |
+| Saturation | `0.95` | Slightly desaturated for pastel feel |
+| Contrast | `0.85` | Low contrast — soft and dreamy |
+| Film grain | `0.01` | Minimal — below FFmpeg noise threshold |
+| FFmpeg FPS | `24` | Standard cinematic |
+| FFmpeg preset | `medium` | Balanced encode speed / quality |
+| FFmpeg CRF | `19` | High quality |
+| FFmpeg extras | `gblur=sigma=0.5` | Atmospheric haze only (no noise) |
+
+#### `spectral_mythology`
+
+Mythical creature-focused — ancient wisdom.
+
+| Parameter | Value | Notes |
+|---|---|---|
+| Bloom intensity | `0.9` | Soft bloom |
+| Fog density | `0.20` | Medium fog; no FFmpeg gblur (fog ≤ 0.2) |
+| Fog color (via color grading) | Shadows `rgb(10,20,45)`, Midtones `rgb(40,60,60)`, Highlights `rgb(255,215,180)` | Cool blue shadows, warm gold highlights |
+| Chromatic aberration | `0.10` | Moderate spectral fringe |
+| Vignette intensity | `0.30` | Medium edge darkening (FFmpeg angle `0.41`) |
+| Saturation | `1.15` | Moderately boosted |
+| Contrast | `0.95` | Slightly softened |
+| Film grain | `0.02` | Minimal — below FFmpeg noise threshold |
+| FFmpeg FPS | `24` | Standard cinematic |
+| FFmpeg preset | `medium` | Balanced encode speed / quality |
+| FFmpeg CRF | `20` | High quality |
+| FFmpeg extras | — | No gblur (fog ≤ 0.2), no noise (grain ≤ 0.02) |
+
+#### `neon_ritual`
+
+Ritualistic energy ceremony — spiritual ritual.
+
+| Parameter | Value | Notes |
+|---|---|---|
+| Bloom intensity | `1.1` | Anamorphic bloom |
+| Fog density | `0.18` | Light fog; no FFmpeg gblur (fog ≤ 0.2) |
+| Fog color (via color grading) | Shadows `rgb(20,5,40)`, Midtones `rgb(60,20,80)`, Highlights `rgb(255,100,255)` | Deep purple shadows, magenta-neon highlights |
+| Chromatic aberration | `0.15` | Strongest — neon spectral fringe |
+| Vignette intensity | `0.40` | Heaviest vignette (FFmpeg angle `0.38`) |
+| Saturation | `1.3` | Highest — neon-saturated |
+| Contrast | `1.05` | Slightly punchy |
+| Film grain | `0.04` | Strongest; triggers FFmpeg `noise=alls=3:allf=t` |
+| FFmpeg FPS | `30` | Smooth cinematic motion |
+| FFmpeg preset | `slow` | Higher encode quality |
+| FFmpeg CRF | `18` | Near-lossless |
+| FFmpeg extras | `noise=alls=3:allf=t` | Film grain only (no gblur) |
+
+### Cross-Style Comparison
+
+| Parameter | ethereal_default | cosmic_cinematic | luminous_dreamscape | spectral_mythology | neon_ritual |
+|---|---|---|---|---|---|
+| Bloom | 0.8 | 1.0 | **1.2** | 0.9 | 1.1 |
+| Fog density | 0.15 | 0.25 | **0.30** | 0.20 | 0.18 |
+| Vignette | 0.25 | 0.35 | 0.20 | 0.30 | **0.40** |
+| Chromatic aberr. | 0.08 | 0.12 | 0.05 | 0.10 | **0.15** |
+| Saturation | 1.1 | 1.2 | 0.95 | 1.15 | **1.3** |
+| Contrast | 0.9 | **1.1** | 0.85 | 0.95 | 1.05 |
+| Film grain | 0.02 | 0.03 | 0.01 | 0.02 | **0.04** |
+| FPS | 24 | 30 | 24 | 24 | 30 |
+| CRF | 20 | 18 | 19 | 20 | 18 |
+| FFmpeg gblur | No | Yes | Yes | No | No |
+| FFmpeg noise | No | Yes | No | No | Yes |
+
+### ML Palette Parameters Per Style
+
+Each style also defines an ML-side color palette used during frame generation (spectral gradients, energy particles, fog overlays).
+
+| Parameter | ethereal_default | cosmic_cinematic | luminous_dreamscape | spectral_mythology | neon_ritual |
+|---|---|---|---|---|---|
+| Base color | `rgb(10,10,46)` | `rgb(5,5,30)` | `rgb(20,15,40)` | `rgb(8,12,35)` | `rgb(15,5,30)` |
+| Gradient start | `rgb(255,105,180)` | `rgb(148,0,211)` | `rgb(220,208,255)` | `rgb(64,224,208)` | `rgb(138,43,226)` |
+| Gradient end | `rgb(0,206,209)` | `rgb(0,191,255)` | `rgb(255,179,71)` | `rgb(255,215,0)` | `rgb(255,215,0)` |
+| Accent | `rgb(138,43,226)` | `rgb(255,215,0)` | `rgb(255,105,180)` | `rgb(0,206,209)` | `rgb(255,20,147)` |
+| Glow color | `rgb(230,230,250)` | `rgb(200,200,255)` | `rgb(255,240,255)` | `rgb(180,255,230)` | `rgb(200,150,255)` |
+| Fog opacity | 60 | 80 | 100 | 70 | 50 |
+| Keywords | ethereal light, spectral glow, volumetric fog, dreamlike atmosphere | cosmic aura, neon mist, transcendent energy, spectral glow | dreamlike atmosphere, iridescent fabric, ethereal light, mythical harmony | mythical harmony, spectral glow, cosmic aura, volumetric fog | transcendent energy, neon mist, cosmic aura, spectral glow |
 
 ---
 
