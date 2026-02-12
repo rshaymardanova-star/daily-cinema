@@ -324,8 +324,14 @@ def run_render(job_id: str, project_id: str, scene: dict, template_name: str, vi
 
 @app.post("/render", response_model=RenderStatus)
 async def render(req: RenderRequest):
-    template = req.template if req.template in TEMPLATES else DEFAULT_TEMPLATE
-    visual_style = req.visual_style if req.visual_style in VISUAL_HDRP_PROFILES else "ethereal_default"
+    template = req.template
+    if not template or template not in TEMPLATES:
+        logger.warning("Invalid template '%s' in render request, falling back to '%s'", req.template, DEFAULT_TEMPLATE)
+        template = DEFAULT_TEMPLATE
+    visual_style = req.visual_style
+    if not visual_style or visual_style not in VISUAL_HDRP_PROFILES:
+        logger.warning("Invalid visual_style '%s' in render request, falling back to 'ethereal_default'", req.visual_style)
+        visual_style = "ethereal_default"
     if visual_style in TEMPLATES and template == "ethereal_default":
         template = visual_style
     jobs[req.job_id] = {

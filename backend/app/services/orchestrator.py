@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.models.database import async_session
 from app.models.project import Project, Shot, MLJob, RenderJob
+from app.schemas.project import VALID_VISUAL_STYLES, DEFAULT_VISUAL_STYLE
 from app.metrics import (
     ML_JOB_DURATION,
     RENDER_DURATION,
@@ -41,7 +42,15 @@ async def run_pipeline(project_id: uuid.UUID) -> None:
                 logger.error("Project %s not found", project_id)
                 return
 
-            visual_style = project.visual_style or "ethereal_default"
+            raw_style = project.visual_style or ""
+            if raw_style not in VALID_VISUAL_STYLES:
+                logger.warning(
+                    "Project %s has invalid visual_style '%s', falling back to '%s'",
+                    project_id, raw_style, DEFAULT_VISUAL_STYLE,
+                )
+                visual_style = DEFAULT_VISUAL_STYLE
+            else:
+                visual_style = raw_style
 
             ml_tasks = []
             for shot in project.shots:

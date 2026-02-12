@@ -125,6 +125,118 @@ class TestVisualStyleSuccessPaths:
         assert result["project_status"] == "completed"
 
 
+INVALID_STYLES = [
+    "nonexistent_style_xyz",
+    "random_garbage_123",
+    "placeholder_v1",
+    "ETHEREAL_DEFAULT",
+    "cosmic cinematic",
+]
+
+
+class TestVisualStyleValidation:
+    def test_invalid_style_coerced_to_default_on_create(self, client):
+        r = client.post(
+            f"{BASE_URL}/projects",
+            json={
+                "name": "Validation: Invalid",
+                "visual_style": "nonexistent_style_xyz",
+                "shots": [{"prompt": "test scene", "order": 1}],
+            },
+            headers=HEADERS,
+        )
+        assert r.status_code == 200
+        assert r.json()["visual_style"] == "ethereal_default"
+
+    def test_empty_string_coerced_to_default_on_create(self, client):
+        r = client.post(
+            f"{BASE_URL}/projects",
+            json={
+                "name": "Validation: Empty",
+                "visual_style": "",
+                "shots": [{"prompt": "test scene", "order": 1}],
+            },
+            headers=HEADERS,
+        )
+        assert r.status_code == 200
+        assert r.json()["visual_style"] == "ethereal_default"
+
+    def test_omitted_style_defaults_on_create(self, client):
+        r = client.post(
+            f"{BASE_URL}/projects",
+            json={
+                "name": "Validation: Omitted",
+                "shots": [{"prompt": "test scene", "order": 1}],
+            },
+            headers=HEADERS,
+        )
+        assert r.status_code == 200
+        assert r.json()["visual_style"] == "ethereal_default"
+
+    @pytest.mark.parametrize("bad_style", INVALID_STYLES)
+    def test_various_invalid_styles_coerced(self, client, bad_style):
+        r = client.post(
+            f"{BASE_URL}/projects",
+            json={
+                "name": f"Validation: {bad_style[:20]}",
+                "visual_style": bad_style,
+                "shots": [{"prompt": "test", "order": 1}],
+            },
+            headers=HEADERS,
+        )
+        assert r.status_code == 200
+        assert r.json()["visual_style"] == "ethereal_default", f"Style '{bad_style}' was not coerced"
+
+    @pytest.mark.parametrize("good_style", ALL_STYLES)
+    def test_valid_styles_accepted_as_is(self, client, good_style):
+        r = client.post(
+            f"{BASE_URL}/projects",
+            json={
+                "name": f"Validation: {good_style}",
+                "visual_style": good_style,
+                "shots": [{"prompt": "test", "order": 1}],
+            },
+            headers=HEADERS,
+        )
+        assert r.status_code == 200
+        assert r.json()["visual_style"] == good_style
+
+    def test_persisted_style_survives_round_trip(self, client):
+        r = client.post(
+            f"{BASE_URL}/projects",
+            json={
+                "name": "Validation: Persist",
+                "visual_style": "neon_ritual",
+                "shots": [{"prompt": "test", "order": 1}],
+            },
+            headers=HEADERS,
+        )
+        assert r.status_code == 200
+        project_id = r.json()["id"]
+
+        r = client.get(f"{BASE_URL}/projects/{project_id}", headers=HEADERS)
+        assert r.status_code == 200
+        assert r.json()["visual_style"] == "neon_ritual"
+
+    def test_coerced_style_persisted_correctly(self, client):
+        r = client.post(
+            f"{BASE_URL}/projects",
+            json={
+                "name": "Validation: Coerced Persist",
+                "visual_style": "totally_invalid",
+                "shots": [{"prompt": "test", "order": 1}],
+            },
+            headers=HEADERS,
+        )
+        assert r.status_code == 200
+        project_id = r.json()["id"]
+        assert r.json()["visual_style"] == "ethereal_default"
+
+        r = client.get(f"{BASE_URL}/projects/{project_id}", headers=HEADERS)
+        assert r.status_code == 200
+        assert r.json()["visual_style"] == "ethereal_default"
+
+
 class TestVisualStyleFallback:
     def test_invalid_style_falls_back_to_default(self, client):
         r = client.post(
@@ -138,6 +250,7 @@ class TestVisualStyleFallback:
         )
         assert r.status_code == 200
         project = r.json()
+        assert project["visual_style"] == "ethereal_default"
         project_id = project["id"]
 
         r = client.post(f"{BASE_URL}/projects/{project_id}/render", headers=HEADERS)
@@ -163,6 +276,7 @@ class TestVisualStyleFallback:
             headers=HEADERS,
         )
         assert r.status_code == 200
+        assert r.json()["visual_style"] == "ethereal_default"
         project_id = r.json()["id"]
 
         r = client.post(f"{BASE_URL}/projects/{project_id}/render", headers=HEADERS)
@@ -203,11 +317,39 @@ class TestVisualStyleFallback:
 
         assert status == "completed"
 
+    @pytest.mark.parametrize("bad_style", INVALID_STYLES)
+    def test_invalid_style_pipeline_completes(self, client, bad_style):
+        r = client.post(
+            f"{BASE_URL}/projects",
+            json={
+                "name": f"Fallback Pipeline: {bad_style[:20]}",
+                "visual_style": bad_style,
+                "shots": [{"prompt": "fallback test", "order": 1}],
+            },
+            headers=HEADERS,
+        )
+        assert r.status_code == 200
+        assert r.json()["visual_style"] == "ethereal_default"
+        project_id = r.json()["id"]
+
+        r = client.post(f"{BASE_URL}/projects/{project_id}/render", headers=HEADERS)
+        assert r.status_code == 200
+
+        for _ in range(60):
+            r = client.get(f"{BASE_URL}/projects/{project_id}/status", headers=HEADERS)
+            status = r.json()["project_status"]
+            if status in ("completed", "failed"):
+                break
+            time.sleep(2)
+
+        assert status == "completed"
+
     def test_ml_invalid_style_returns_ok(self, client):
+        job_id = f"fallback-ml-{int(time.time())}"
         r = client.post(
             f"{ML_URL}/generate",
             json={
-                "job_id": "fallback-ml-test-001",
+                "job_id": job_id,
                 "shot_id": "00000000-0000-0000-0000-000000000001",
                 "project_id": "00000000-0000-0000-0000-000000000002",
                 "prompt": "test fallback",
@@ -218,12 +360,22 @@ class TestVisualStyleFallback:
         assert r.status_code == 200
         data = r.json()
         assert data["status"] == "processing"
+        assert data["model"] == "ethereal_default"
+
+        for _ in range(30):
+            sr = client.get(f"{ML_URL}/status/{job_id}")
+            if sr.json()["status"] == "completed":
+                assert sr.json()["model"] == "ethereal_default"
+                return
+            time.sleep(1)
+        pytest.fail("ML fallback job did not complete")
 
     def test_unity_invalid_style_returns_ok(self, client):
+        job_id = f"fallback-unity-{int(time.time())}"
         r = client.post(
             f"{UNITY_URL}/render",
             json={
-                "job_id": "fallback-unity-test-001",
+                "job_id": job_id,
                 "project_id": "00000000-0000-0000-0000-000000000003",
                 "scene": {"project_id": "test", "shots": []},
                 "visual_style": "totally_bogus_style",
@@ -233,6 +385,15 @@ class TestVisualStyleFallback:
         assert r.status_code == 200
         data = r.json()
         assert data["status"] == "processing"
+        assert data["template"] == "ethereal_default"
+
+        for _ in range(30):
+            sr = client.get(f"{UNITY_URL}/status/{job_id}")
+            if sr.json()["status"] == "completed":
+                assert sr.json()["video_url"] != ""
+                return
+            time.sleep(1)
+        pytest.fail("Unity fallback job did not complete")
 
 
 class TestMLUnityConsistency:

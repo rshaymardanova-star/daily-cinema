@@ -335,7 +335,10 @@ def run_generation(job_id: str, shot_id: str, project_id: str, prompt: str, mode
 
 @app.post("/generate", response_model=JobStatus)
 async def generate(req: GenerateRequest):
-    model = req.model if req.model in MODELS else DEFAULT_MODEL
+    model = req.model
+    if not model or model not in MODELS:
+        logger.warning("Invalid model '%s' in generate request, falling back to '%s'", req.model, DEFAULT_MODEL)
+        model = DEFAULT_MODEL
     jobs[req.job_id] = {
         "job_id": req.job_id,
         "status": "processing",
@@ -343,7 +346,10 @@ async def generate(req: GenerateRequest):
         "model": model,
         "duration_ms": 0,
     }
-    visual_style = req.visual_style if req.visual_style in VISUAL_STYLES else DEFAULT_VISUAL_STYLE
+    visual_style = req.visual_style
+    if not visual_style or visual_style not in VISUAL_STYLES:
+        logger.warning("Invalid visual_style '%s' in generate request, falling back to '%s'", req.visual_style, DEFAULT_VISUAL_STYLE)
+        visual_style = DEFAULT_VISUAL_STYLE
     executor.submit(run_generation, req.job_id, req.shot_id, req.project_id, req.prompt, model, req.num_frames, visual_style)
     return JobStatus(**jobs[req.job_id])
 

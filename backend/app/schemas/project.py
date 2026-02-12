@@ -1,7 +1,19 @@
+import logging
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+logger = logging.getLogger(__name__)
+
+VALID_VISUAL_STYLES = {
+    "ethereal_default",
+    "cosmic_cinematic",
+    "luminous_dreamscape",
+    "spectral_mythology",
+    "neon_ritual",
+}
+DEFAULT_VISUAL_STYLE = "ethereal_default"
 
 
 class ShotCreate(BaseModel):
@@ -14,6 +26,14 @@ class ProjectCreate(BaseModel):
     description: str = Field("", max_length=5000)
     visual_style: str = Field("ethereal_default", max_length=100)
     shots: list[ShotCreate] = Field(default_factory=list, max_length=100)
+
+    @field_validator("visual_style")
+    @classmethod
+    def validate_visual_style(cls, v: str) -> str:
+        if not v or v not in VALID_VISUAL_STYLES:
+            logger.warning("Invalid visual_style '%s', falling back to '%s'", v, DEFAULT_VISUAL_STYLE)
+            return DEFAULT_VISUAL_STYLE
+        return v
 
 
 class ShotResponse(BaseModel):
