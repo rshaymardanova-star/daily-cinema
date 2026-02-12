@@ -1,3 +1,5 @@
+import hashlib
+import json
 import logging
 import os
 import subprocess
@@ -142,6 +144,17 @@ Instrumentator(excluded_handlers=["/health/live", "/health/ready", "/metrics"]).
 
 jobs: dict[str, dict] = {}
 executor = ThreadPoolExecutor(max_workers=settings.max_workers)
+render_cache: dict[str, dict] = {}
+CACHE_HITS = Counter("unity_cache_hits_total", "Unity render cache hits")
+CACHE_MISSES = Counter("unity_cache_misses_total", "Unity render cache misses")
+
+
+def _render_cache_key(scene: dict, template_name: str, visual_style: str) -> str:
+    frame_urls = []
+    for shot in scene.get("shots", []):
+        frame_urls.extend(shot.get("frame_urls", []))
+    payload = json.dumps({"frame_urls": sorted(frame_urls), "template": template_name, "visual_style": visual_style}, sort_keys=True)
+    return hashlib.sha256(payload.encode()).hexdigest()
 
 
 class RenderRequest(BaseModel):
@@ -293,6 +306,24 @@ def run_render(job_id: str, project_id: str, scene: dict, template_name: str, vi
     if settings.acu_mode == "light":
         run_render_mock(job_id, project_id, scene, template_name, visual_style)
         return
+
+    ck = _render_cache_key(scene, template_name, visual_style)
+    cached = render_cache.get(ck)
+    if cached:
+        CACHE_HITS.inc()
+        logger.info("Render cache hit for job %s (key=%s)", job_id, ck[:12])
+        jobs[job_id] = {
+            "job_id": job_id,
+            "status": "completed",
+            "video_url": cached["video_url"],
+            "template": template_name,
+            "duration_ms": 0.1,
+            "mock": False,
+        }
+        RENDER_TOTAL.labels(template=template_name, status="completed").inc()
+        return
+    CACHE_MISSES.inc()
+
     start = time.monotonic()
     JOBS_IN_PROGRESS.inc()
     try:
@@ -322,9 +353,10 @@ def run_render(job_id: str, project_id: str, scene: dict, template_name: str, vi
                 "duration_ms": duration,
                 "mock": False,
             }
+            render_cache[ck] = {"video_url": video_url}
             RENDER_DURATION.labels(template=template_name, status="completed").observe(time.monotonic() - start)
             RENDER_TOTAL.labels(template=template_name, status="completed").inc()
-            logger.info("Render job %s completed in %.0fms", job_id, duration)
+            logger.info("Render job %s completed in %.0fms (cached key=%s)", job_id, duration, ck[:12])
 
     except Exception as e:
         logger.exception("Render job %s failed: %s", job_id, e)

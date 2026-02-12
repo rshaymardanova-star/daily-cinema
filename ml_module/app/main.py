@@ -1,4 +1,6 @@
+import hashlib
 import io
+import json
 import logging
 import sys
 import time
@@ -116,6 +118,14 @@ Instrumentator(excluded_handlers=["/health/live", "/health/ready", "/metrics"]).
 jobs: dict[str, dict] = {}
 executor = ThreadPoolExecutor(max_workers=settings.max_workers)
 model_cache: dict[str, bool] = {}
+generation_cache: dict[str, dict] = {}
+CACHE_HITS = Counter("ml_cache_hits_total", "ML generation cache hits")
+CACHE_MISSES = Counter("ml_cache_misses_total", "ML generation cache misses")
+
+
+def _cache_key(prompt: str, visual_style: str, model: str, num_frames: int) -> str:
+    payload = json.dumps({"prompt": prompt, "visual_style": visual_style, "model": model, "num_frames": num_frames}, sort_keys=True)
+    return hashlib.sha256(payload.encode()).hexdigest()
 
 
 class GenerateRequest(BaseModel):
@@ -310,6 +320,24 @@ def run_generation(job_id: str, shot_id: str, project_id: str, prompt: str, mode
     if settings.acu_mode == "light":
         run_generation_mock(job_id, shot_id, project_id, prompt, model, num_frames, visual_style)
         return
+
+    ck = _cache_key(prompt, visual_style, model, num_frames)
+    cached = generation_cache.get(ck)
+    if cached:
+        CACHE_HITS.inc()
+        logger.info("Cache hit for job %s (key=%s)", job_id, ck[:12])
+        jobs[job_id] = {
+            "job_id": job_id,
+            "status": "completed",
+            "frame_urls": cached["frame_urls"],
+            "model": model,
+            "duration_ms": 0.1,
+            "mock": False,
+        }
+        GENERATION_TOTAL.labels(model=model, status="completed").inc()
+        return
+    CACHE_MISSES.inc()
+
     start = time.monotonic()
     JOBS_IN_PROGRESS.inc()
     try:
@@ -338,9 +366,10 @@ def run_generation(job_id: str, shot_id: str, project_id: str, prompt: str, mode
             "duration_ms": duration,
             "mock": False,
         }
+        generation_cache[ck] = {"frame_urls": frame_urls}
         GENERATION_DURATION.labels(model=model, status="completed").observe(time.monotonic() - start)
         GENERATION_TOTAL.labels(model=model, status="completed").inc()
-        logger.info("ML job %s completed in %.0fms", job_id, duration)
+        logger.info("ML job %s completed in %.0fms (cached key=%s)", job_id, duration, ck[:12])
     except Exception as e:
         logger.exception("ML job %s failed: %s", job_id, e)
         GENERATION_DURATION.labels(model=model, status="failed").observe(time.monotonic() - start)

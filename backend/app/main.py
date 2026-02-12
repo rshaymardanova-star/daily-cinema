@@ -14,6 +14,7 @@ from app.logging_config import setup_logging
 from app.models.database import engine, Base
 from app.api.projects import router as projects_router
 from app.api.health import router as health_router
+from app.api.styles import router as styles_router
 from app.middleware.auth import verify_api_key
 from app.services.redis_queue import redis_queue
 
@@ -71,3 +72,4 @@ Instrumentator(
 
 app.include_router(health_router)
 app.include_router(projects_router)
+app.include_router(styles_router)
