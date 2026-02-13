@@ -1,8 +1,9 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useState } from "react";
 import { useProject, useProjectStatus, useStartRender } from "../../../lib/hooks/useProjects";
 import StatusBadge from "../../../components/StatusBadge";
+import ACUHint from "../../../components/ACUHint";
 
 export default function ProjectDetailPage({
   params,
@@ -14,6 +15,8 @@ export default function ProjectDetailPage({
   const [polling, setPolling] = useState(false);
   const { data: status } = useProjectStatus(id, polling);
   const startRender = useStartRender(id);
+
+  const isActive = project?.status === "rendering" || status?.project_status === "rendering";
 
   const handleRender = () => {
     startRender.mutate(undefined, {
@@ -28,14 +31,6 @@ export default function ProjectDetailPage({
   if (error || !project) {
     return <div className="text-red-400">Failed to load project: {error?.message ?? "Not found"}</div>;
   }
-
-  const isActive = project.status === "rendering" || (status?.project_status === "rendering");
-  const isDone = status?.project_status === "completed" || status?.project_status === "failed";
-
-  useEffect(() => {
-    if (isActive && !polling) setPolling(true);
-    if (isDone && polling) setPolling(false);
-  }, [isActive, isDone, polling]);
 
   return (
     <div className="space-y-8">
@@ -54,13 +49,16 @@ export default function ProjectDetailPage({
             )}
           </div>
         </div>
-        <button
-          onClick={handleRender}
-          disabled={startRender.isPending || isActive}
-          className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-        >
-          {startRender.isPending ? "Starting..." : isActive ? "Rendering..." : "Start Render"}
-        </button>
+        <div className="flex flex-col items-end gap-1">
+          <button
+            onClick={handleRender}
+            disabled={startRender.isPending || isActive}
+            className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {startRender.isPending ? "Starting..." : isActive ? "Rendering..." : "Start Render"}
+          </button>
+          <ACUHint level="high">Full render — high ACU usage</ACUHint>
+        </div>
       </div>
 
       {startRender.isError && (

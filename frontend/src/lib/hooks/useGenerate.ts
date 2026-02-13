@@ -1,8 +1,9 @@
 "use client";
 
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { generate, generateBatch, getGenerateStatus } from "../api/generate";
-import type { GenerateRequest } from "../types";
+import { useAdaptivePolling } from "./useAdaptivePolling";
+import type { GenerateRequest, JobStatus } from "../types";
 
 export function useGenerate() {
   return useMutation({
@@ -16,11 +17,11 @@ export function useGenerateBatch() {
   });
 }
 
-export function useGenerateStatus(jobId: string | undefined, poll = false) {
-  return useQuery({
+export function useGenerateStatus(jobId: string | undefined) {
+  return useAdaptivePolling<JobStatus>({
     queryKey: ["generate", jobId],
     queryFn: () => getGenerateStatus(jobId!),
     enabled: !!jobId,
-    refetchInterval: poll ? 1000 : false,
+    getStatus: (data) => data?.status,
   });
 }

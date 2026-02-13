@@ -1,8 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useGenerate, useGenerateStatus } from "../../lib/hooks/useGenerate";
+import { useValidateStyle } from "../../lib/hooks/useStyles";
 import StatusBadge from "../../components/StatusBadge";
+import ACUHint from "../../components/ACUHint";
+import CacheHitBadge from "../../components/CacheHitBadge";
 import type { VisualStyle } from "../../lib/types";
 import { VISUAL_STYLES } from "../../lib/types";
 
@@ -11,17 +14,24 @@ export default function GeneratePage() {
   const [prompt, setPrompt] = useState("");
   const [visualStyle, setVisualStyle] = useState<VisualStyle>("ethereal_default");
   const [activeJobId, setActiveJobId] = useState<string | undefined>();
-  const [polling, setPolling] = useState(false);
 
   const generateMutation = useGenerate();
-  const { data: jobStatus } = useGenerateStatus(activeJobId, polling);
+  const { data: jobStatus } = useGenerateStatus(activeJobId);
 
-  if (jobStatus?.status === "completed" || jobStatus?.status === "failed") {
-    if (polling) setPolling(false);
-  }
+  const validateMutation = useValidateStyle();
+  const [styleValid, setStyleValid] = useState(true);
+
+  useEffect(() => {
+    validateMutation.mutate(visualStyle, {
+      onSuccess: (result) => setStyleValid(result.is_valid),
+      onError: () => setStyleValid(true),
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visualStyle]);
 
   const handleGenerate = (e: React.FormEvent) => {
     e.preventDefault();
+    if (jobStatus?.cache_hit) return;
     const id = jobId.trim() || `job-${Date.now()}`;
     generateMutation.mutate(
       {
@@ -35,11 +45,12 @@ export default function GeneratePage() {
       {
         onSuccess: (data) => {
           setActiveJobId(data.job_id);
-          setPolling(true);
         },
       }
     );
   };
+
+  const generateDisabled = generateMutation.isPending || !styleValid;
 
   return (
     <div className="max-w-2xl mx-auto space-y-8">
@@ -48,6 +59,9 @@ export default function GeneratePage() {
         <p className="mt-1 text-sm text-gray-400">
           Send a generation request directly to the ML service.
         </p>
+        <div className="mt-2">
+          <ACUHint level="info">ACU_MODE=light is enabled by default</ACUHint>
+        </div>
       </div>
 
       <form onSubmit={handleGenerate} className="space-y-4">
@@ -95,16 +109,29 @@ export default function GeneratePage() {
                 </option>
               ))}
             </select>
+            {!styleValid && (
+              <p className="mt-1 text-xs text-amber-400">Fix style to continue</p>
+            )}
           </div>
         </div>
 
-        <button
-          type="submit"
-          disabled={generateMutation.isPending}
-          className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-        >
-          {generateMutation.isPending ? "Submitting..." : "Generate"}
-        </button>
+        <div className="flex items-center gap-3">
+          <div className="relative group">
+            <button
+              type="submit"
+              disabled={generateDisabled}
+              className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {generateMutation.isPending ? "Submitting..." : "Generate"}
+            </button>
+            {!styleValid && (
+              <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block whitespace-nowrap rounded bg-gray-800 px-2 py-1 text-xs text-amber-400 shadow-lg ring-1 ring-gray-700">
+                Fix style to continue
+              </span>
+            )}
+          </div>
+          <ACUHint level="high">Full generation — high ACU usage</ACUHint>
+        </div>
 
         {generateMutation.isError && (
           <p className="text-sm text-red-400">{generateMutation.error.message}</p>
@@ -114,7 +141,10 @@ export default function GeneratePage() {
       {jobStatus && (
         <section className="rounded-lg border border-gray-800 bg-gray-900/50 p-5 space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-white">Job Result</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold text-white">Job Result</h2>
+              <CacheHitBadge cacheHit={jobStatus.cache_hit} />
+            </div>
             <StatusBadge status={jobStatus.status} />
           </div>
           <dl className="grid grid-cols-2 gap-2 text-xs">

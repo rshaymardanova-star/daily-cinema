@@ -103,6 +103,7 @@ export interface JobStatus {
   resolved_style?: string;
   duration_ms?: number;
   mock?: boolean;
+  cache_hit?: boolean;
 }
 
 export interface RenderRequest {
@@ -122,6 +123,7 @@ export interface RenderStatus {
   resolved_style?: string;
   duration_ms?: number;
   mock?: boolean;
+  cache_hit?: boolean;
 }
 
 export interface StyleInfo {
