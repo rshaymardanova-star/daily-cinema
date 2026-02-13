@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState } from "react";
+import { use, useEffect, useState } from "react";
 import { useProject, useProjectStatus, useStartRender } from "../../../lib/hooks/useProjects";
 import StatusBadge from "../../../components/StatusBadge";
 
@@ -29,11 +29,13 @@ export default function ProjectDetailPage({
     return <div className="text-red-400">Failed to load project: {error?.message ?? "Not found"}</div>;
   }
 
-  const isActive = project.status === "rendering";
-  if (isActive && !polling) setPolling(true);
-  if (status?.project_status === "completed" || status?.project_status === "failed") {
-    if (polling) setPolling(false);
-  }
+  const isActive = project.status === "rendering" || (status?.project_status === "rendering");
+  const isDone = status?.project_status === "completed" || status?.project_status === "failed";
+
+  useEffect(() => {
+    if (isActive && !polling) setPolling(true);
+    if (isDone && polling) setPolling(false);
+  }, [isActive, isDone, polling]);
 
   return (
     <div className="space-y-8">
