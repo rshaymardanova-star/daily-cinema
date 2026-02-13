@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useTranslations } from "next-intl";
 import type { ShotCreate } from "../lib/types";
 
 interface ShotEditorProps {
@@ -9,6 +9,8 @@ interface ShotEditorProps {
 }
 
 export default function ShotEditor({ shots, onChange }: ShotEditorProps) {
+  const t = useTranslations("shots");
+
   const addShot = () => {
     onChange([...shots, { prompt: "", order: shots.length }]);
   };
@@ -25,18 +27,18 @@ export default function ShotEditor({ shots, onChange }: ShotEditorProps) {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <label className="block text-sm font-medium text-gray-300">Shots</label>
+        <label className="block text-sm font-medium text-gray-300">{t("label")}</label>
         <button
           type="button"
           onClick={addShot}
           className="rounded bg-indigo-600 px-3 py-1 text-xs font-medium text-white hover:bg-indigo-500"
         >
-          + Add Shot
+          {t("addShot")}
         </button>
       </div>
       {shots.length === 0 && (
         <p className="text-sm text-gray-500">
-          No shots added. A default shot will be created automatically.
+          {t("noShots")}
         </p>
       )}
       {shots.map((shot, i) => (
@@ -47,7 +49,7 @@ export default function ShotEditor({ shots, onChange }: ShotEditorProps) {
           <textarea
             value={shot.prompt}
             onChange={(e) => updateShot(i, e.target.value)}
-            placeholder="Describe this shot..."
+            placeholder={t("placeholder")}
             rows={2}
             className="flex-1 rounded-md border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
           />

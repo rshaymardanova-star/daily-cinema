@@ -1,22 +1,7 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { VISUAL_STYLES, type VisualStyle } from "../lib/types";
-
-const STYLE_LABELS: Record<VisualStyle, string> = {
-  ethereal_default: "Ethereal Default",
-  cosmic_cinematic: "Cosmic Cinematic",
-  luminous_dreamscape: "Luminous Dreamscape",
-  spectral_mythology: "Spectral Mythology",
-  neon_ritual: "Neon Ritual",
-};
-
-const STYLE_DESCRIPTIONS: Record<VisualStyle, string> = {
-  ethereal_default: "Soft, luminous, meditative — the default visual universe",
-  cosmic_cinematic: "Deep cosmic blues, cinematic depth, epic scale",
-  luminous_dreamscape: "Pastel fog, dreamlike atmosphere, gentle diffusion",
-  spectral_mythology: "Ancient wisdom, spectral scales, mythical guardians",
-  neon_ritual: "Neon glow, ritual energy, vibrant spectral gradients",
-};
 
 interface StyleSelectorProps {
   value: VisualStyle;
@@ -24,10 +9,12 @@ interface StyleSelectorProps {
 }
 
 export default function StyleSelector({ value, onChange }: StyleSelectorProps) {
+  const t = useTranslations("style");
+
   return (
     <div className="space-y-2">
       <label className="block text-sm font-medium text-gray-300">
-        Visual Style
+        {t("label")}
       </label>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {VISUAL_STYLES.map((style) => (
@@ -42,10 +29,10 @@ export default function StyleSelector({ value, onChange }: StyleSelectorProps) {
             }`}
           >
             <div className="text-sm font-medium text-gray-100">
-              {STYLE_LABELS[style]}
+              {t(style)}
             </div>
             <div className="mt-1 text-xs text-gray-400">
-              {STYLE_DESCRIPTIONS[style]}
+              {t(`${style}_desc`)}
             </div>
           </button>
         ))}

@@ -1,16 +1,19 @@
 "use client";
 
 import { use, useState } from "react";
-import { useProject, useProjectStatus, useStartRender } from "../../../lib/hooks/useProjects";
-import StatusBadge from "../../../components/StatusBadge";
-import ACUHint from "../../../components/ACUHint";
+import { useTranslations } from "next-intl";
+import { useProject, useProjectStatus, useStartRender } from "../../../../lib/hooks/useProjects";
+import StatusBadge from "../../../../components/StatusBadge";
+import ACUHint from "../../../../components/ACUHint";
 
 export default function ProjectDetailPage({
   params,
 }: {
-  params: Promise<{ id: string }>;
+  params: Promise<{ id: string; locale: string }>;
 }) {
   const { id } = use(params);
+  const t = useTranslations("project");
+  const tAcu = useTranslations("acu");
   const { data: project, isLoading, error } = useProject(id);
   const [polling, setPolling] = useState(false);
   const { data: status } = useProjectStatus(id, polling);
@@ -25,11 +28,11 @@ export default function ProjectDetailPage({
   };
 
   if (isLoading) {
-    return <div className="text-gray-400">Loading project...</div>;
+    return <div className="text-gray-400">{t("loading")}</div>;
   }
 
   if (error || !project) {
-    return <div className="text-red-400">Failed to load project: {error?.message ?? "Not found"}</div>;
+    return <div className="text-red-400">{t("loadError", { error: error?.message ?? t("notFound") })}</div>;
   }
 
   return (
@@ -55,9 +58,9 @@ export default function ProjectDetailPage({
             disabled={startRender.isPending || isActive}
             className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {startRender.isPending ? "Starting..." : isActive ? "Rendering..." : "Start Render"}
+            {startRender.isPending ? t("starting") : isActive ? t("rendering") : t("startRender")}
           </button>
-          <ACUHint level="high">Full render — high ACU usage</ACUHint>
+          <ACUHint level="high">{tAcu("highRender")}</ACUHint>
         </div>
       </div>
 
@@ -66,10 +69,10 @@ export default function ProjectDetailPage({
       )}
 
       <section>
-        <h2 className="text-lg font-semibold text-white">Shots</h2>
+        <h2 className="text-lg font-semibold text-white">{t("shots")}</h2>
         <div className="mt-3 space-y-2">
           {project.shots.length === 0 && (
-            <p className="text-sm text-gray-500">No shots</p>
+            <p className="text-sm text-gray-500">{t("noShots")}</p>
           )}
           {project.shots.map((shot) => (
             <div
@@ -78,7 +81,7 @@ export default function ProjectDetailPage({
             >
               <div className="min-w-0 flex-1">
                 <span className="text-xs font-mono text-gray-500">#{shot.order}</span>
-                <p className="mt-0.5 truncate text-sm text-gray-200">{shot.prompt || "Default shot"}</p>
+                <p className="mt-0.5 truncate text-sm text-gray-200">{shot.prompt || t("defaultShot")}</p>
               </div>
               <StatusBadge status={shot.status} />
             </div>
@@ -88,7 +91,7 @@ export default function ProjectDetailPage({
 
       {status?.ml_jobs && status.ml_jobs.length > 0 && (
         <section>
-          <h2 className="text-lg font-semibold text-white">ML Jobs</h2>
+          <h2 className="text-lg font-semibold text-white">{t("mlJobs")}</h2>
           <div className="mt-3 space-y-2">
             {status.ml_jobs.map((job) => (
               <div
@@ -105,7 +108,7 @@ export default function ProjectDetailPage({
 
       {project.render_jobs.length > 0 && (
         <section>
-          <h2 className="text-lg font-semibold text-white">Render Jobs</h2>
+          <h2 className="text-lg font-semibold text-white">{t("renderJobs")}</h2>
           <div className="mt-3 space-y-2">
             {project.render_jobs.map((job) => (
               <div
@@ -133,8 +136,8 @@ export default function ProjectDetailPage({
       )}
 
       <section className="text-xs text-gray-600">
-        <p>Created: {new Date(project.created_at).toLocaleString()}</p>
-        <p>Updated: {new Date(project.updated_at).toLocaleString()}</p>
+        <p>{t("created", { date: new Date(project.created_at).toLocaleString() })}</p>
+        <p>{t("updated", { date: new Date(project.updated_at).toLocaleString() })}</p>
       </section>
     </div>
   );

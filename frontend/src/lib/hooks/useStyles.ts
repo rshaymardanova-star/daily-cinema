@@ -10,8 +10,10 @@ export function useStyles() {
   });
 }
 
-export function useValidateStyle() {
-  return useMutation({
-    mutationFn: (style: string) => validateStyle(style),
+export function useValidateStyle(style: string) {
+  return useQuery({
+    queryKey: ["styles", "validate", style],
+    queryFn: () => validateStyle(style),
+    enabled: style.length > 0,
   });
 }
