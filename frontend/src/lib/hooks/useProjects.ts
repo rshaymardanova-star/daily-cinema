@@ -8,7 +8,8 @@ import {
   getTimeline,
   startRender,
 } from "../api/projects";
-import type { ProjectCreate } from "../types";
+import { useAdaptivePolling } from "./useAdaptivePolling";
+import type { ProjectCreate, ProjectStatusResponse } from "../types";
 
 export function useCreateProject() {
   const qc = useQueryClient();
@@ -29,11 +30,11 @@ export function useProject(projectId: string | undefined) {
 }
 
 export function useProjectStatus(projectId: string | undefined, poll = false) {
-  return useQuery({
+  return useAdaptivePolling<ProjectStatusResponse>({
     queryKey: ["projects", projectId, "status"],
     queryFn: () => getProjectStatus(projectId!),
-    enabled: !!projectId,
-    refetchInterval: poll ? 2000 : false,
+    enabled: !!projectId && poll,
+    getStatus: (data) => data?.project_status,
   });
 }
 

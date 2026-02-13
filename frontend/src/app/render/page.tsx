@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { useRender, useRenderPreview, useRenderStatus } from "../../lib/hooks/useRender";
 import StatusBadge from "../../components/StatusBadge";
+import ACUHint from "../../components/ACUHint";
+import CacheHitBadge from "../../components/CacheHitBadge";
 import type { VisualStyle } from "../../lib/types";
 import { VISUAL_STYLES } from "../../lib/types";
 
@@ -11,19 +13,15 @@ export default function RenderPage() {
   const [projectId, setProjectId] = useState("");
   const [visualStyle, setVisualStyle] = useState<VisualStyle>("ethereal_default");
   const [activeJobId, setActiveJobId] = useState<string | undefined>();
-  const [polling, setPolling] = useState(false);
   const [isPreview, setIsPreview] = useState(false);
 
   const renderMutation = useRender();
   const previewMutation = useRenderPreview();
-  const { data: renderStatus } = useRenderStatus(activeJobId, polling);
-
-  if (renderStatus?.status === "completed" || renderStatus?.status === "failed") {
-    if (polling) setPolling(false);
-  }
+  const { data: renderStatus } = useRenderStatus(activeJobId);
 
   const handleSubmit = (e: React.FormEvent, preview: boolean) => {
     e.preventDefault();
+    if (renderStatus?.cache_hit) return;
     const id = jobId.trim() || `render-${Date.now()}`;
     const pid = projectId.trim() || `proj-${Date.now()}`;
     const payload = {
@@ -38,7 +36,6 @@ export default function RenderPage() {
     mutation.mutate(payload, {
       onSuccess: (data) => {
         setActiveJobId(data.job_id);
-        setPolling(true);
       },
     });
   };
@@ -52,6 +49,9 @@ export default function RenderPage() {
         <p className="mt-1 text-sm text-gray-400">
           Send a render request directly to the Unity worker.
         </p>
+        <div className="mt-2">
+          <ACUHint level="info">ACU_MODE=light is enabled by default</ACUHint>
+        </div>
       </div>
 
       <form className="space-y-4">
@@ -121,6 +121,11 @@ export default function RenderPage() {
           </button>
         </div>
 
+        <div className="flex items-center gap-4">
+          <ACUHint level="high">Full render — high ACU usage</ACUHint>
+          <ACUHint level="low">Preview — low ACU usage</ACUHint>
+        </div>
+
         {activeMutation.isError && (
           <p className="text-sm text-red-400">{activeMutation.error.message}</p>
         )}
@@ -129,7 +134,10 @@ export default function RenderPage() {
       {renderStatus && (
         <section className="rounded-lg border border-gray-800 bg-gray-900/50 p-5 space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-white">Render Result</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold text-white">Render Result</h2>
+              <CacheHitBadge cacheHit={renderStatus.cache_hit} />
+            </div>
             <StatusBadge status={renderStatus.status} />
           </div>
           <dl className="grid grid-cols-2 gap-2 text-xs">

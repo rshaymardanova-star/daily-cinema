@@ -1,8 +1,9 @@
 "use client";
 
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { render, renderPreview, getRenderStatus, checkFilters } from "../api/render";
-import type { RenderRequest } from "../types";
+import { useAdaptivePolling } from "./useAdaptivePolling";
+import type { RenderRequest, RenderStatus } from "../types";
 
 export function useRender() {
   return useMutation({
@@ -16,12 +17,12 @@ export function useRenderPreview() {
   });
 }
 
-export function useRenderStatus(jobId: string | undefined, poll = false) {
-  return useQuery({
+export function useRenderStatus(jobId: string | undefined) {
+  return useAdaptivePolling<RenderStatus>({
     queryKey: ["render", jobId],
     queryFn: () => getRenderStatus(jobId!),
     enabled: !!jobId,
-    refetchInterval: poll ? 1000 : false,
+    getStatus: (data) => data?.status,
   });
 }
 
